@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+ENV/
+
+# Model checkpoints & cache
+output/
+unsloth_compiled_cache/
+training/output/
+training/unsloth_compiled_cache/
+*.safetensors
+*.bin
+*.pt
+
+# Minikube / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Prometheus local data
+prometheus_data/
+data/
+resume.tex
