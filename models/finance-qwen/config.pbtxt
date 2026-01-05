@@ -1,0 +1,85 @@
+# Triton Model Configuration for vLLM Backend
+# Model: Qwen2-1.5B Fine-tuned for Finance (GPTQ Quantized)
+#
+# This configuration is designed to be dynamically modified by the MCP Agent
+# for autonomous performance optimization.
+
+name: "finance-qwen"
+backend: "vllm"
+
+# Maximum theoretical batch size
+# vLLM backend requires this to be 0 (decoupled mode)
+max_batch_size: 0
+
+# Input configuration for text generation
+input [
+  {
+    name: "text_input"
+    data_type: TYPE_STRING
+    dims: [ 1 ]
+  },
+  {
+    name: "stream"
+    data_type: TYPE_BOOL
+    dims: [ 1 ]
+    optional: true
+  },
+  {
+    name: "sampling_parameters"
+    data_type: TYPE_STRING
+    dims: [ 1 ]
+    optional: true
+  }
+]
+
+# Output configuration
+output [
+  {
+    name: "text_output"
+    data_type: TYPE_STRING
+    dims: [ -1 ]
+  }
+]
+
+# Instance configuration
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 0 ]
+  }
+]
+
+# ============================================
+# vLLM ENGINE PARAMETERS
+# ============================================
+parameters [
+  {
+    key: "model"
+    value: { string_value: "/model_repository/finance-qwen/1" }
+  },
+  {
+    key: "gpu_memory_utilization"
+    value: { string_value: "0.5" }
+  },
+  {
+    key: "dtype"
+    value: { string_value: "float16" }
+  },
+  {
+    key: "max_model_len"
+    value: { string_value: "1024" }
+  },
+  {
+    key: "enforce_eager"
+    value: { string_value: "false" }
+  },
+  {
+    key: "max_num_seqs"
+    value: { string_value: "32" }
+  },
+  {
+    key: "enable_chunked_prefill"
+    value: { string_value: "true" }
+  }
+]
