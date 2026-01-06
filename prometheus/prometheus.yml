@@ -1,0 +1,39 @@
+# Prometheus Configuration for Autonomic Inference Cluster
+# High-resolution scraping for fast agent reaction
+
+global:
+  scrape_interval: 1s       # Fast scraping for real-time monitoring
+  evaluation_interval: 1s   # Fast rule evaluation
+  scrape_timeout: 1s
+
+# Alerting (optional, for future expansion)
+alerting:
+  alertmanagers: []
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Triton Inference Server Metrics
+  - job_name: 'triton'
+    static_configs:
+      - targets: ['triton_server:8002']
+    metrics_path: /metrics
+    scrape_interval: 1s
+    # Key metrics to monitor:
+    # - nv_inference_request_duration_us: Request latency
+    # - nv_inference_queue_duration_us: Queue wait time
+    # - nv_inference_request_success: Successful requests
+    # - nv_inference_request_failure: Failed requests
+    # - nv_gpu_utilization: GPU usage percentage
+    # - nv_gpu_memory_used_bytes: GPU memory consumption
+
+  # MCP Agent Config Metrics (for Grafana config display)
+  - job_name: 'mcp_agent_config'
+    static_configs:
+      - targets: ['mcp_agent:5000']
+    metrics_path: /metrics/config
+    scrape_interval: 2s
