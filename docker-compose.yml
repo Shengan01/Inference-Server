@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # TRITON INFERENCE SERVER
+  # ============================================
+  triton_server:
+    build:
+      context: ./triton
+      dockerfile: Dockerfile
+    container_name: triton_server
+    ports:
+      - "8000:8000"  # HTTP
+      - "8001:8001"  # gRPC
+      - "8002:8002"  # Metrics
+    volumes:
+      - ./models:/model_repository
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - inference-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # Model loading takes time
+    restart: unless-stopped
+
+  # ============================================
+  # PROMETHEUS
+  # ============================================
+  prometheus:
+    build:
+      context: ./prometheus
+      dockerfile: Dockerfile
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+    networks:
+      - inference-network
+    depends_on:
+      - triton_server
+    restart: unless-stopped
+
+  # ============================================
+  # MCP AGENT
+  # ============================================
+  mcp_agent:
+    build:
+      context: ./mcp_agent
+      dockerfile: Dockerfile
+    container_name: mcp_agent
+    ports:
+      - "5000:5000"  # MCP Server
+    volumes:
+      - ./models:/model_repository  # Access to config.pbtxt
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - TRITON_URL=http://triton_server:8000
+      - MODEL_NAME=finance-qwen
+    networks:
+      - inference-network
+    depends_on:
+      - prometheus
+      - triton_server
+    restart: unless-stopped
+
+  # ============================================
+  # LLM AGENT
+  # ============================================
+  llm_agent:
+    build:
+      context: ./llm_agent
+      dockerfile: Dockerfile
+    container_name: llm_agent
+    environment:
+      - OLLAMA_URL=http://localhost:11434  # Use localhost with host network
+      - OLLAMA_MODEL=qwen2.5:7b  # Larger model for better reasoning
+      - MCP_AGENT_URL=http://localhost:5000  # Also use localhost
+      - DECISION_INTERVAL=2  # Faster decision cycle
+    network_mode: host  # Share host's network to access localhost services
+    restart: unless-stopped
+
+  # ============================================
+  # GRAFANA
+  # ============================================
+  grafana:
+    build:
+      context: ./grafana
+      dockerfile: Dockerfile
+    container_name: grafana
+    ports:
+      - "3000:3000"  # Grafana UI
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - inference-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+networks:
+  inference-network:
+    driver: bridge
+
+volumes:
+  prometheus_data:
