@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-sa
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: inference-monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-reader-role
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: inference-monitoring
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-reader-binding
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: inference-monitoring
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-sa
+    namespace: inference-monitoring
+roleRef:
+  kind: ClusterRole
+  name: prometheus-reader-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-agent-sa
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: mcp-agent
+    app.kubernetes.io/part-of: inference-monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-sa
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: inference-monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: triton-sa
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: triton-server
+    app.kubernetes.io/part-of: inference-monitoring
