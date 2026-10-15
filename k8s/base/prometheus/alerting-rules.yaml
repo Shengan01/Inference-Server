@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerting-rules
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: inference-monitoring
+data:
+  inference-alerts.yaml: |
+    groups:
+      - name: inference_alerts
+        rules:
+          - alert: InferenceServerDown
+            expr: up{job="triton"} == 0
+            for: 10s
+            labels:
+              severity: critical
+            annotations:
+              summary: "Triton Inference Server is down"
+              description: "Triton target has been unreachable for more than 10 seconds."
+
+          - alert: HighInferenceLatency
+            expr: (rate(nv_inference_request_duration_us[15s]) / (rate(nv_inference_request_success[15s]) + 0.001)) / 1000 > 50
+            for: 15s
+            labels:
+              severity: warning
+            annotations:
+              summary: "High inference latency detected"
+              description: "Average latency per request is exceeding 50ms under current load."
+
+          - alert: HighInferenceQueueDepth
+            expr: nv_inference_queue_duration_us > 100000
+            for: 15s
+            labels:
+              severity: warning
+            annotations:
+              summary: "Inference queue latency build-up"
+              description: "Requests are spending over 100ms waiting in the Triton execution queue."
+
+          - alert: GPUMemorySaturation
+            expr: (nv_gpu_memory_used_bytes / nv_gpu_memory_total_bytes) > 0.85
+            for: 30s
+            labels:
+              severity: critical
+            annotations:
+              summary: "GPU VRAM usage is critically high"
+              description: "GPU VRAM usage exceeded 85%, hot reload might cause OOM."
