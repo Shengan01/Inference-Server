@@ -1,0 +1,200 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: inference-monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-dns
+  namespace: inference-monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow Grafana to query Prometheus
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 9090
+    # Allow MCP Agent to query Prometheus
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-agent
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # Allow Prometheus to scrape Triton
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: triton-server
+      ports:
+        - protocol: TCP
+          port: 8002
+        - protocol: TCP
+          port: 8000
+    # Allow Prometheus to scrape MCP Agent
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-agent
+      ports:
+        - protocol: TCP
+          port: 5000
+    # Allow self scrape
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Ingress controller can access Grafana UI
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # Grafana can query Prometheus datasource
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mcp-agent
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Prometheus scrapes /metrics/config
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 5000
+    # Ingress or simulation can send reconfigure requests
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    # MCP agent queries Prometheus
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    # MCP agent triggers hot-reload on Triton
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: triton-server
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-triton-server
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: triton-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Prometheus scrapes Triton metrics
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8002
+    # MCP agent reloads model or checks health
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-agent
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Ingress or simulation client sends inference requests
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8001
