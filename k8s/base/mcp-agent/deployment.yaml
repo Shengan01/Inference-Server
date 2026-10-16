@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-agent
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: mcp-agent
+    app.kubernetes.io/part-of: inference-monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcp-agent
+        app.kubernetes.io/part-of: inference-monitoring
+    spec:
+      serviceAccountName: mcp-agent-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: init-config
+          image: python:3.11-slim
+          command: ["sh", "-c", "mkdir -p /model_repository/finance-qwen && cp /config-template/config.pbtxt /model_repository/finance-qwen/config.pbtxt && chmod 666 /model_repository/finance-qwen/config.pbtxt"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config-volume
+              mountPath: /model_repository/finance-qwen
+            - name: config-template
+              mountPath: /config-template
+      containers:
+        - name: mcp-agent
+          image: mcp-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http-mcp
+              containerPort: 5000
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-service:9090"
+            - name: TRITON_URL
+              value: "http://triton-service:8000"
+            - name: MODEL_NAME
+              value: "finance-qwen"
+            - name: CONFIG_PATH
+              value: "/model_repository/finance-qwen/config.pbtxt"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          volumeMounts:
+            - name: config-volume
+              mountPath: /model_repository/finance-qwen
+      volumes:
+        - name: config-volume
+          emptyDir: {}
+        - name: config-template
+          configMap:
+            name: triton-model-config
