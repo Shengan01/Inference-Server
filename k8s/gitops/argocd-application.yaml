@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: inference-monitoring-app
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: inference-monitoring
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/shengan/Inference-Server.git' # Replace with user's repository URL
+    targetRevision: HEAD
+    path: k8s/overlays/cpu-demo
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: inference-monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
