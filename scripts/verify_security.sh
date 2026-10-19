@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -e
+
+NAMESPACE="inference-monitoring"
+
+echo "=========================================================="
+echo "🛡️ AUDYT BEZPIECZEŃSTWA KUBERNETES DLA CI/CD"
+echo "Namespace: $NAMESPACE"
+echo "=========================================================="
+
+echo ""
+echo "1️⃣  Weryfikacja RBAC (Zasada najmniejszych uprawnień - Least Privilege)..."
+echo "Czy prometheus-sa może czytać pody? (Powinno być YES):"
+kubectl auth can-i get pods --as=system:serviceaccount:$NAMESPACE:prometheus-sa -n $NAMESPACE || true
+
+echo "Czy prometheus-sa może tworzyć lub usuwać pody? (Powinno być NO):"
+kubectl auth can-i delete pods --as=system:serviceaccount:$NAMESPACE:prometheus-sa -n $NAMESPACE || true
+
+echo "Czy prometheus-sa może czytać Secrets? (Powinno być NO):"
+kubectl auth can-i get secrets --as=system:serviceaccount:$NAMESPACE:prometheus-sa -n $NAMESPACE || true
+
+echo ""
+echo "2️⃣  Weryfikacja SecurityContext w podach (Non-root, Capabilities drop)..."
+kubectl get pods -n $NAMESPACE -o jsonpath='{range .items[*]}{"Pod: "}{.metadata.name}{"\n  NonRoot: "}{.spec.securityContext.runAsNonRoot}{"\n  User: "}{.spec.securityContext.runAsUser}{"\n"}{end}' || true
+
+echo ""
+echo "3️⃣  Weryfikacja NetworkPolicies (Zero Trust)..."
+kubectl get networkpolicies -n $NAMESPACE
+
+echo ""
+echo "4️⃣  Weryfikacja ResourceQuota i LimitRange..."
+kubectl get resourcequota -n $NAMESPACE
+kubectl get limitrange -n $NAMESPACE
+
+echo ""
+echo "=========================================================="
+echo "✅ Audyt bezpieczeństwa zakończony!"
+echo "=========================================================="
