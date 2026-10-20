@@ -1,0 +1,6 @@
+{
+    "model": "/model_repository/finance-qwen/1",
+    "dtype": "float16",
+    "gpu_memory_utilization": 0.6,
+    "max_model_len": 4096
+}
