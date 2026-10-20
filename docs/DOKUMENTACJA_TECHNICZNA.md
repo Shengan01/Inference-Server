@@ -38,32 +38,38 @@ Poniższy diagram przedstawia architekturę komponentów w dedykowanym namespace
 
 ```mermaid
 flowchart TD
+    classDef default fill:#1e293b,stroke:#475569,stroke-width:1.5px,color:#ffffff;
+    classDef k8s fill:#0f3b6d,stroke:#38bdf8,stroke-width:2px,color:#ffffff;
+    classDef obs fill:#0e462a,stroke:#4ade80,stroke-width:2px,color:#ffffff;
+    classDef sec fill:#5c1d24,stroke:#f87171,stroke-width:2px,color:#ffffff;
+    classDef storage fill:#522e0a,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
+
     subgraph IngressLayer ["Warstwa Wejściowa (Ingress & TLS)"]
-        ING["Ingress Controller (NGINX)"]
+        ING["Ingress Controller (NGINX)"]:::k8s
     end
 
     subgraph MonitoringNamespace ["Namespace: inference-monitoring (Pod Security: Baseline)"]
         direction TB
 
         subgraph StorageLayer ["Pamięć Trwała"]
-            PVC[("PersistentVolumeClaim\nprometheus-storage (2Gi)")]
+            PVC[("PersistentVolumeClaim\nprometheus-storage (2Gi)")]:::storage
         end
 
         subgraph ObservabilityStack ["Stos Monitoringu"]
-            PROM["Prometheus\n(StatefulSet)"]
-            GRAF["Grafana\n(Deployment)"]
-            ALERTS["PrometheusRule / Alerting\n(HighLatency, QueueStall)"]
+            PROM["Prometheus\n(StatefulSet)"]:::obs
+            GRAF["Grafana\n(Deployment)"]:::obs
+            ALERTS["PrometheusRule / Alerting\n(HighLatency, QueueStall)"]:::obs
         end
 
         subgraph CoreWorkloads ["Obciążenia Aplikacyjne"]
-            TRITON["Triton Inference Server\n(Deployment / GPU or Mock)"]
-            AGENT["MCP Agent & Exporter\n(Deployment - Python)"]
+            TRITON["Triton Inference Server\n(Deployment / GPU or Mock)"]:::k8s
+            AGENT["MCP Agent & Exporter\n(Deployment - Python)"]:::k8s
         end
 
         subgraph NetworkIsolation ["Zero-Trust NetworkPolicies"]
-            NP1["default-deny-all"]
-            NP2["allow-prometheus-scrape"]
-            NP3["allow-mcp-agent"]
+            NP1["default-deny-all"]:::sec
+            NP2["allow-prometheus-scrape"]:::sec
+            NP3["allow-mcp-agent"]:::sec
         end
     end
 

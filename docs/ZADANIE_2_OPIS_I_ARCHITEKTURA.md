@@ -41,14 +41,16 @@ System po wdrożeniu w klastrze **Kubernetes** (namespace `inference-monitoring`
 
 ```mermaid
 flowchart TD
-    classDef sec fill:#ffebee,stroke:#c62828,stroke-width:2px;
-    classDef k8s fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
-    classDef obs fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
-    classDef storage fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
+    classDef default fill:#1e293b,stroke:#475569,stroke-width:1.5px,color:#ffffff;
+    classDef client fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#ffffff;
+    classDef k8s fill:#0f3b6d,stroke:#38bdf8,stroke-width:2px,color:#ffffff;
+    classDef obs fill:#0e462a,stroke:#4ade80,stroke-width:2px,color:#ffffff;
+    classDef sec fill:#5c1d24,stroke:#f87171,stroke-width:2px,color:#ffffff;
+    classDef storage fill:#522e0a,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
 
     subgraph External ["Ruch Zewnętrzny / Klient"]
-        USER["Klient / Skrypt Testowy (simulation)"]
-        ADMIN["Administrator / SRE"]
+        USER["Klient / Skrypt Testowy (simulation)"]:::client
+        ADMIN["Administrator / SRE"]:::client
     end
 
     subgraph IngressLayer ["Warstwa Dostępu (Ingress)"]
