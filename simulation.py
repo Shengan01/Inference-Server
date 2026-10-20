@@ -86,12 +86,12 @@ async def check_system_ready() -> bool:
             try:
                 response = await client.get(url)
                 if response.status_code == 200:
-                    console.print(f"  ✅ {name}: [green]Ready[/green]")
+                    console.print(f"  [OK] {name}: [green]Ready[/green]")
                 else:
-                    console.print(f"  ❌ {name}: [red]Not Ready (HTTP {response.status_code})[/red]")
+                    console.print(f"  [ERROR] {name}: [red]Not Ready (HTTP {response.status_code})[/red]")
                     all_ready = False
             except Exception as e:
-                console.print(f"  ❌ {name}: [red]Error - {e}[/red]")
+                console.print(f"  [ERROR] {name}: [red]Error - {e}[/red]")
                 all_ready = False
     
     return all_ready
@@ -267,7 +267,7 @@ def create_dashboard(metrics: SimulationMetrics, batch_size: Any = "N/A") -> Pan
     
     return Panel(
         table,
-        title="🤖 Autonomic Inference Cluster Demo",
+        title="Autonomic Inference Cluster Demo",
         border_style="blue"
     )
 
@@ -276,7 +276,7 @@ async def run_simulation():
     """
     Run load generation simulation.
     
-    This script ONLY generates load and displays metrics.
+    This script generates load and displays metrics.
     The LLM Agent (llm_agent) makes autonomous decisions about configuration.
     """
     console.clear()
@@ -288,12 +288,12 @@ async def run_simulation():
     
     # Check system readiness
     if not await check_system_ready():
-        console.print("\n[bold red]❌ System not ready. Please ensure Docker Compose is running.[/bold red]")
+        console.print("\n[bold red][ERROR] System not ready. Please ensure Docker Compose is running.[/bold red]")
         console.print("Run: [cyan]docker compose up -d[/cyan]")
         console.print("Then start LLM agent: [cyan]docker compose --profile autonomous up -d[/cyan]")
         sys.exit(1)
     
-    console.print("\n[bold green]✅ All systems ready. Starting load generation...[/bold green]")
+    console.print("\n[bold green][OK] All systems ready. Starting load generation...[/bold green]")
     console.print("[dim]Note: Configuration decisions are made by the LLM Agent (llm_agent container)[/dim]\n")
     await asyncio.sleep(2)
     
@@ -317,7 +317,7 @@ async def run_simulation():
         for phase_idx, (phase_name, rps, duration) in enumerate(phases):
             # Update current act
             metrics.current_act = phase_name
-            metrics.agent_action = f"🚀 Generating {rps} RPS for {duration}s"
+            metrics.agent_action = f"Generating {rps} RPS for {duration}s"
             live.update(create_dashboard(metrics, last_batch_size))
             
             # Start load generation for this phase
@@ -337,9 +337,9 @@ async def run_simulation():
                 
                 # Just display metrics - LLM Agent makes decisions
                 if latency >= 0:
-                    metrics.agent_action = f"📊 Latency: {latency:.1f}ms | Config: {last_batch_size} | RPS: {metrics.current_rps:.0f}"
+                    metrics.agent_action = f"Latency: {latency:.1f}ms | Config: {last_batch_size} | RPS: {metrics.current_rps:.0f}"
                 else:
-                    metrics.agent_action = f"📊 Monitoring... Config: {last_batch_size}"
+                    metrics.agent_action = f"Monitoring... Config: {last_batch_size}"
                 
                 live.update(create_dashboard(metrics, last_batch_size))
                 await asyncio.sleep(0.5)
@@ -353,7 +353,7 @@ async def run_simulation():
     # Final summary
     console.print("\n")
     console.print(Panel.fit(
-        "[bold green]✅ LOAD GENERATION COMPLETE[/bold green]\n\n"
+        "[bold green]LOAD GENERATION COMPLETE[/bold green]\n\n"
         "The LLM Agent autonomously managed configuration during the test.\n"
         "Check llm_agent logs for decision reasoning:\n"
         "[cyan]docker logs llm_agent[/cyan]",

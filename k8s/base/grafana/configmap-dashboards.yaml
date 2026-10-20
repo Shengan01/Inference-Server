@@ -681,7 +681,7 @@ data:
               "refId": "A"
             }
           ],
-          "title": "⚙️ Config: max_num_seqs",
+          "title": "Config: max_num_seqs",
           "type": "stat"
         },
         {

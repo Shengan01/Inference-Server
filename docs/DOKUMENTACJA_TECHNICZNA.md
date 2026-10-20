@@ -1,4 +1,4 @@
-# 📘 Dokumentacja Techniczna: Klastrowy System Monitoringu i Zarządzania Inferencją AI w Środowisku Kubernetes
+# Dokumentacja Techniczna: Klastrowy System Monitoringu i Zarządzania Inferencją AI w Środowisku Kubernetes
 
 **Przedmiot:** Bezpieczeństwo CI/CD / Zaawansowane Środowiska Chmurowe i Konteneryzacja  
 **Wybrany temat:** **Temat 3: System zbierania metryk i monitoringu (Prometheus + Grafana + Custom Exporter)**  
@@ -7,7 +7,7 @@
 
 ---
 
-## 📑 Spis Treści
+## Spis Treści
 1. [Wprowadzenie i Cel Projektu](#1-wprowadzenie-i-cel-projektu)
 2. [Architektura Systemu w Kubernetes](#2-architektura-systemu-w-kubernetes)
 3. [Zarządzanie z punktu widzenia Kubernetes (K8s Management)](#3-zarządzanie-z-punktu-widzenia-kubernetes-k8s-management)
@@ -253,9 +253,9 @@ Poniżej zestawienie wyników uzyskanych podczas zautomatyzowanego testu w środ
 
 | Faza Testowa | Ruch (RPS) | Wysłane Żądania | Pomyślne (%) | Śr. Latencja (ms) | P95 Latencja (ms) | Status Alertów |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. THE CALM** | 20 | 200 | 100% | **18.42 ms** | 24.10 ms | Zielony (Brak) |
-| **2. THE STORM** | 150 | 2250 | 99.8% | **84.60 ms** | 118.50 ms | ⚠️ `HighInferenceLatency` FIRE |
-| **3. THE RESOLUTION** | 150 | 2250 | 100% | **26.80 ms** | 35.40 ms | Zielony (Resolved) |
+| **1. THE CALM** | 20 | 200 | 100% | **18.42 ms** | 24.10 ms | Brak (OK) |
+| **2. THE STORM** | 150 | 2250 | 99.8% | **84.60 ms** | 118.50 ms | Aktywny: HighInferenceLatency (Firing) |
+| **3. THE RESOLUTION** | 150 | 2250 | 100% | **26.80 ms** | 35.40 ms | Wygaszony (Resolved) |
 
 **Wniosek:** Test dowodzi, że system monitoringu w K8s poprawnie zbiera metryki w wysokiej rozdzielczości, a architektura umożliwia dynamiczną adaptację parametrów bez restartu podów i bez przestoju w obsłudze ruchu.
 

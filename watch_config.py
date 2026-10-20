@@ -63,7 +63,7 @@ def create_dashboard(params: dict, last_modified: float) -> Panel:
     # Highlight the key parameter we're watching
     for key, value in params.items():
         if key == "Max Num Seqs":
-            table.add_row(f"⚡ {key}", f"[bold yellow]{value}[/bold yellow]")
+            table.add_row(f"* {key}", f"[bold yellow]{value}[/bold yellow]")
         else:
             table.add_row(key, value)
     
@@ -74,7 +74,7 @@ def create_dashboard(params: dict, last_modified: float) -> Panel:
     
     return Panel(
         table,
-        title="📊 Triton Configuration Monitor",
+        title="Triton Configuration Monitor",
         subtitle=f"[dim]Watching: {CONFIG_PATH.name}[/dim]",
         border_style="blue"
     )
@@ -92,7 +92,7 @@ def main():
         console.print(f"[red]Error: Config file not found at {CONFIG_PATH}[/red]")
         return
     
-    console.print(f"\n[green]✓ Watching:[/green] {CONFIG_PATH}")
+    console.print(f"\n[green][OK] Watching:[/green] {CONFIG_PATH}")
     console.print("[dim]Press Ctrl+C to exit[/dim]\n")
     
     last_content = ""
@@ -106,7 +106,7 @@ def main():
                 # Check if content changed
                 if content != last_content:
                     if last_content:
-                        console.print("[yellow]⚡ Configuration changed![/yellow]")
+                        console.print("[yellow][UPDATE] Configuration changed.[/yellow]")
                     last_content = content
                 
                 params = parse_config(content)

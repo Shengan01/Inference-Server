@@ -1,12 +1,12 @@
-# 🧠 Personal Project Guide: Autonomic Inference Server
+# Personal Project Guide: Autonomic Inference Server
 
-This is your personal reference for understanding and explaining this project in interviews.
+This is your reference for understanding and explaining this project.
 
 ---
 
-## 🎯 The Core Idea (Elevator Pitch)
+## The Core Idea (Elevator Pitch)
 
-> "Instead of scaling out with more servers when traffic spikes, this system uses an LLM to intelligently tune the software configuration of existing hardware in real-time, like a digital SRE."
+> "Instead of scaling out with more servers when traffic spikes, this system uses an LLM to intelligently tune the software configuration of existing hardware in real-time, like an automated SRE controller."
 
 **Key differentiators:**
 - LLM makes decisions autonomously (not just rule-based)
@@ -15,7 +15,7 @@ This is your personal reference for understanding and explaining this project in
 
 ---
 
-## 📁 File-by-File Code Explanation
+## File-by-File Code Explanation
 
 ### `simulation.py` — The Demo Script
 
@@ -120,9 +120,9 @@ await client.post(f"{triton_url}/v2/repository/models/{model_name}/load")
 
 ---
 
-### `llm_agent/agent.py` — The Autonomous Brain ⭐
+### `llm_agent/agent.py` — The Autonomous Decision Loop
 
-**This is the crown jewel.** Understand this well.
+**Core implementation of the decision loop.**
 
 **Main loop structure:**
 ```python
@@ -235,7 +235,7 @@ model = FastLanguageModel.get_peft_model(
 
 ---
 
-## 🔑 Key Interview Points
+## Key Technical Points
 
 ### 1. "Why not just use rule-based scaling?"
 > "Rule-based systems are rigid. An LLM can understand nuanced situations like 'latency is high but trending down' or 'this is a weekend pattern'. Plus, the RL module learns from outcomes, so it gets smarter over time."
@@ -254,7 +254,7 @@ model = FastLanguageModel.get_peft_model(
 
 ---
 
-## 🎬 Demo Script
+## Demo Script Walkthrough
 
 When showing the project:
 
@@ -263,21 +263,17 @@ When showing the project:
 3. **Watch agent logs:** `docker logs llm_agent -f` (in another terminal)
 
 Point out:
-- When IDLE → agent scales down to max_num_seqs=8
-- When EXTREME → agent scales up to max_num_seqs=1024
+- When IDLE -> agent scales down to max_num_seqs=8
+- When EXTREME -> agent scales up to max_num_seqs=1024
 - The LLM's reasoning appears in the logs
 
 ---
 
-## 📊 Metrics to Know
+## Key Metrics Reference
 
-| Metric | What It Measures | Good Range |
-|--------|------------------|------------|
+| Metric | What It Measures | Standard Range |
+|--------|------------------|----------------|
 | `max_num_seqs` | Parallel sequences Triton can handle | 8-1024 |
 | `gpu_memory_utilization` | % of VRAM to use | 0.3-0.9 |
 | Latency | Time per request | <10ms |
 | RPS | Requests per second | depends on load |
-
----
-
-Good luck with interviews! 🚀

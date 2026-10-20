@@ -546,7 +546,7 @@ async def run_agent_loop():
                         pre_change_latency=current_latency
                     )
                     
-                    logger.info(f"🔧 Applying config: seqs={new_seqs}, gpu={new_gpu}")
+                    logger.info(f"Applying config: seqs={new_seqs}, gpu={new_gpu}")
                     result = await apply_config(new_seqs, new_gpu)
                     
                     if result.get("success"):
