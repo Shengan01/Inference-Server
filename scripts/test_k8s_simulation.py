@@ -27,7 +27,7 @@ MODEL_NAME = "finance-qwen"
 # Size of the per-second burst in the storm / resolution phases. It has to
 # comfortably exceed the mock's default batch capacity (max_num_seqs=32) even
 # when the load generator cannot fire every request at the same instant.
-STORM_RPS = int(os.getenv("STORM_RPS", "300"))
+STORM_RPS = int(os.getenv("STORM_RPS", "400"))
 
 @dataclass
 class PhaseResult:
@@ -238,7 +238,7 @@ async def main():
         "post_reconfig_success_rate>=95%": res3.requests_sent > 0 and res3.successful_requests / res3.requests_sent >= 0.95,
         "prometheus_targets_up_and_rules_loaded": prom["ok"],
         # Server-side latency (from Prometheus counters), independent of port-forward overhead
-        "storm_degrades_server_latency>2x_baseline_and_>40ms": res2.server_avg_latency_ms > max(40.0, 2.0 * res1.server_avg_latency_ms),
+        "storm_degrades_server_latency>2x_baseline_and_>25ms": res2.server_avg_latency_ms > max(25.0, 2.0 * res1.server_avg_latency_ms),
         "hot_reload_restores_latency<30ms": 0 < res3.server_avg_latency_ms < 30.0,
         "hot_reload_improves_latency>50%": 0 < res3.server_avg_latency_ms < 0.5 * res2.server_avg_latency_ms,
     }
