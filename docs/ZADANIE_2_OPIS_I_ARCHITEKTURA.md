@@ -23,7 +23,7 @@ System po wdrożeniu w klastrze **Kubernetes** (namespace `inference-monitoring`
    * Udostępnienie interfejsu API `/reconfigure` umożliwiającego dynamiczną rekonfigurację silnika (np. wielkości batcha `max_num_seqs`) w trybie *hot-reload* bez konieczności restartu podów i bez utraty dostępności serwisu.
 
 4. **Proaktywne wykrywanie anomalii i alertowanie (Prometheus Alerting Rules):**
-   * Ciągła ewaluacja zdefiniowanych deklaratywnie reguł alertów (`HighInferenceLatency`, `HighInferenceQueueDepth`, `GPUMemorySaturation`, `InferenceServerDown`) z natychmiastowym ostrzeganiem o nasyceniu zasobów lub awarii.
+   * Ciągła ewaluacja zdefiniowanych deklaratywnie reguł alertów (`HighInferenceLatency`, `HighInferenceQueueDepth`, `GPUMemorySaturation`, `InferenceServerDown`) z natychmiastowym ostrzeganiem o nasyceniu zasobów lub awarii; aktywne alerty trafiają do Alertmanagera.
 
 5. **Ścisłe utwardzenie bezpieczeństwa klastra (Zero-Trust & Hardening):**
    * Całkowita izolacja ruchu sieciowego za pomocą polityk **NetworkPolicy** (*default-deny-all* + reguły dedykowane).
@@ -47,57 +47,80 @@ flowchart TD
     classDef obs fill:#0e462a,stroke:#4ade80,stroke-width:2px,color:#ffffff;
     classDef sec fill:#5c1d24,stroke:#f87171,stroke-width:2px,color:#ffffff;
     classDef storage fill:#522e0a,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
+    classDef cicd fill:#3b1d5c,stroke:#c084fc,stroke-width:2px,color:#ffffff;
 
-    subgraph External ["Ruch Zewnętrzny / Klient"]
-        USER["Klient / Skrypt Testowy (simulation)"]:::client
-        ADMIN["Administrator / SRE"]:::client
+    subgraph Delivery ["Delivery: CI/CD and GitOps"]
+        DEV["Developer<br/>git push"]:::client
+        GHA["GitHub Actions<br/>lint, kubeconform, Trivy,<br/>kind integration test"]:::cicd
+        GHCR[("ghcr.io<br/>mcp-agent image")]:::storage
+        GIT["Git repository<br/>k8s/overlays, image tag"]:::cicd
+        ARGO["ArgoCD<br/>auto-sync + self-heal"]:::cicd
     end
 
-    subgraph IngressLayer ["Warstwa Dostępu (Ingress)"]
-        ING["Ingress Controller (NGINX)\ninference.local"]:::k8s
+    subgraph External ["Traffic and Management"]
+        USER["Inference clients / test load"]:::client
+        ADMIN["SRE and Operations"]:::client
     end
 
-    subgraph Cluster ["Namespace: inference-monitoring (Pod Security: Baseline)"]
+    LB["LoadBalancer / minikube tunnel<br/>inference.local, TLS"]:::k8s
+    ING["NGINX Ingress Controller"]:::k8s
+
+    CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
+
+    subgraph Cluster ["Namespace: inference-monitoring"]
         direction TB
 
-        subgraph SecurityControls ["Mechanizmy Bezpieczeństwa (Zero Trust)"]
-            NP["NetworkPolicies\n(default-deny + allow rules)"]:::sec
-            RBAC["RBAC: ServiceAccounts\n+ read-only ClusterRole"]:::sec
-            QUOTA["ResourceQuota & LimitRange\n(CPU: 4 cores, RAM: 8Gi)"]:::sec
+        subgraph SecurityControls ["Security Controls"]
+            NP["NetworkPolicies<br/>default-deny + allow rules"]:::sec
+            QUOTA["ResourceQuota and LimitRange<br/>CPU 4 cores, RAM 8Gi"]:::sec
         end
 
-        subgraph ObservabilityLayer ["Warstwa Obserwowalności i Danych"]
-            PROM["Prometheus Server\n(StatefulSet, :9090)"]:::obs
-            GRAF["Grafana Visualizer\n(Deployment, :3000)"]:::obs
-            PVC[("PersistentVolumeClaim\nprometheus-storage (2Gi)")]:::storage
-            RULES["Alerting Rules\n(HighLatency, QueueStall)"]:::obs
+        subgraph ObservabilityLayer ["Observability Layer"]
+            PROM["Prometheus<br/>StatefulSet, :9090"]:::obs
+            RULES["Alerting rules<br/>ConfigMap, 4 alerts"]:::obs
+            AM["Alertmanager<br/>Deployment, :9093"]:::obs
+            GRAF["Grafana<br/>Deployment, :3000, /grafana"]:::obs
+            PVC1[("PVC prometheus-storage 2Gi")]:::storage
+            PVC2[("PVC grafana-storage 1Gi")]:::storage
         end
 
-        subgraph CoreWorkloads ["Warstwa Wykonawcza Inferencji"]
-            TRITON["Triton Inference Server\n(Deployment, :8000 / :8002)"]:::k8s
-            AGENT["MCP Agent & Exporter\n(Deployment, Python, :5000)"]:::k8s
-            CM["ConfigMaps & Secrets\n(Dashboards, Model Config, Creds)"]:::storage
+        subgraph CoreWorkloads ["Inference and Control Workloads"]
+            TRITON["Triton Inference Server<br/>Deployment, :8000 / :8002<br/>mock on cpu-demo"]:::k8s
+            AGENT["MCP Agent and custom exporter<br/>Deployment, Python, :5000"]:::k8s
+            CM["ConfigMaps<br/>dashboards, datasource, model config"]:::storage
+            SEC["Secrets, created out of band<br/>grafana-secret, inference-tls"]:::storage
         end
     end
 
-    USER -->|Inference Requests :8000| ING
-    ADMIN -->|HTTP Dashboard :3000| ING
+    DEV --> GHA
+    GHA -->|push image| GHCR
+    GHA -->|bump image tag| GIT
+    ARGO -->|poll| GIT
+    ARGO -->|apply overlay| Cluster
+    GHCR -.->|image pull| AGENT
 
+    USER -->|HTTPS /v2| LB
+    ADMIN -->|HTTPS /grafana, /mcp| LB
+    LB --> ING
     ING -->|/grafana| GRAF
-    ING -->|/v2/models| TRITON
+    ING -->|/v2| TRITON
     ING -->|/mcp| AGENT
 
-    PROM -->|Scrape Metrics :8002/metrics| TRITON
-    PROM -->|Scrape Config :5000/metrics/config| AGENT
-    PROM -->|Zapis szeregów czasowych TSDB| PVC
-    PROM -.->|Ewaluacja warunków| RULES
+    PROM -->|scrape :8002/metrics| TRITON
+    PROM -->|scrape :5000/metrics/config| AGENT
+    PROM -->|TSDB| PVC1
+    PROM -.->|evaluate| RULES
+    PROM -->|firing alerts| AM
+    GRAF -->|PromQL :9090| PROM
+    GRAF --> PVC2
+    AGENT -->|PromQL :9090| PROM
+    AGENT -->|hot-reload :8000| TRITON
 
-    GRAF -->|Odpytanie PromQL :9090| PROM
-    AGENT -->|Analiza metryk PromQL :9090| PROM
-    AGENT -->|Hot-Reload dynamic batching :8000| TRITON
-
-    CM -.->|Provisioning przy starcie| GRAF
-    CM -.->|Montowanie parametrów| AGENT
+    CM -.->|provisioning| GRAF
+    CM -.->|config seed| AGENT
+    SEC -.-> GRAF
+    SEC -.-> ING
+    CR -.->|bound to prometheus-sa| PROM
 ```
 
 ## 3. Procedura Testów Wdrożonego Systemu
@@ -106,7 +129,7 @@ Procedura testowa pozwala na obiektywną, powtarzalną i weryfikowalną ocenę o
 
 ### Test 1: Integralność wdrożenia klastra i weryfikacja limitów zasobów (Deployment & Quota Check)
 * **Procedura:** Wykonanie inspekcji stanu wdrożenia poleceniami `kubectl get pods,pvc,svc -n inference-monitoring` oraz weryfikacja limitów przydziału `kubectl describe resourcequota -n inference-monitoring`.
-* **Kryterium sukcesu (PASS):** Wszystkie 4 obciążenia (`prometheus-0`, `grafana`, `mcp-agent`, `triton-server`) raportują status `Running (1/1)` z liczbą restartów `0`. Wolumen PVC bazy Prometheus ma status `Bound`. Łączne zużycie zasobów mieści się w zdefiniowanej kwocie `inference-monitoring-quota`.
+* **Kryterium sukcesu (PASS):** Wszystkie 5 obciążeń (`prometheus-0`, `grafana`, `alertmanager`, `mcp-agent`, `triton-server`) raportują status `Running (1/1)` z liczbą restartów `0`. Wolumeny PVC `prometheus-storage-prometheus-0` i `grafana-storage` mają status `Bound`. Łączne zużycie zasobów mieści się w zdefiniowanej kwocie `inference-monitoring-quota`.
 
 ### Test 2: Audyt bezpieczeństwa środowiska K8s (RBAC, NetworkPolicy, Non-Root)
 * **Procedura:** Uruchomienie zautomatyzowanego skryptu audytującego `./scripts/verify_security.sh`, testującego izolację sieciową, uprawnienia kont serwisowych oraz profile bezpieczeństwa kontenerów.
@@ -116,12 +139,12 @@ Procedura testowa pozwala na obiektywną, powtarzalną i weryfikowalną ocenę o
   3. Polityki `NetworkPolicy` uniemożliwiają nieautoryzowany ruch między niepowiązanymi podami.
 
 ### Test 3: Weryfikacja potoku zbierania metryk i wizualizacji (Observability Pipeline)
-* **Procedura:** Odpytanie API Prometheusa `http://localhost:9090/api/v1/targets` oraz weryfikacja dashboardu Grafany pod adresem `http://localhost:3000`.
+* **Procedura:** Odpytanie API Prometheusa `http://localhost:9090/api/v1/targets` oraz weryfikacja dashboardu Grafany pod adresem `https://inference.local/grafana/`.
 * **Kryterium sukcesu (PASS):** Cele scrapowania (`triton` na porcie 8002 oraz `mcp_agent_config` na porcie 5000) raportują stan `HEALTHY (up=1)`. Dashboard *Autonomous Inference Cluster* w Grafanie automatycznie wyświetla spójne serie czasowe (latencja, pamięć GPU, wielkość batcha) bez konieczności manualnej konfiguracji.
 
 ### Test 4: Reakcja systemu na syntetyczny skok obciążenia i wyzwolenie alertu (Load & Alert Triggering)
 * **Procedura:** Uruchomienie skryptu symulacyjnego `python3 scripts/test_k8s_simulation.py` generującego gwałtowny skok ruchu z 20 RPS do 150 RPS przez 15 sekund przy bazowej konfiguracji silnika inferencyjnego.
-* **Kryterium sukcesu (PASS):** Prometheus rejestruje natychmiastowy wzrost opóźnień P95 > 50 ms oraz wzrost kolejki zapytań. W czasie $\le 15$ sekund reguła alertu `HighInferenceLatency` przechodzi ze stanu `OK` w stan aktywny `FIRING`, co zostaje odnotowane w Grafanie i Prometheus Alertmanagerze.
+* **Kryterium sukcesu (PASS):** Prometheus rejestruje natychmiastowy wzrost opóźnień P95 > 50 ms oraz wzrost kolejki zapytań. W czasie $\le 15$ sekund reguła alertu `HighInferenceLatency` przechodzi ze stanu `OK` w stan aktywny `FIRING`, co jest widoczne w Prometheusie (`/api/v1/alerts`) i w Alertmanagerze.
 
 ### Test 5: Weryfikacja dynamicznej adaptacji SRE i powrotu do SLA (Hot-Reload & Latency Recovery)
 * **Procedura:** Wywołanie procedury optymalizacyjnej przez kontroler SRE (`POST /reconfigure` ze strategią `aggressive` – zwiększenie parametru `max_num_seqs` z 32 do 512) w trakcie trwającego obciążenia 150 RPS.

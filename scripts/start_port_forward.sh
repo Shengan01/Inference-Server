@@ -11,5 +11,6 @@ kubectl port-forward -n inference-monitoring svc/triton-service 8000:8000 &
 kubectl port-forward -n inference-monitoring svc/prometheus-service 9090:9090 &
 kubectl port-forward -n inference-monitoring svc/mcp-agent-service 5000:5000 &
 kubectl port-forward -n inference-monitoring svc/grafana-service 3000:3000 &
+kubectl port-forward -n inference-monitoring svc/alertmanager-service 9093:9093 &
 
 wait

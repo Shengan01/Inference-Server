@@ -2,102 +2,221 @@ name: "CI/CD & Security Pipeline"
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
 
+# Least privilege by default; jobs that need more declare it themselves.
 permissions:
-  contents: write
-  packages: write
-  security-events: write
+  contents: read
+
+env:
+  IMAGE: ghcr.io/shengan01/mcp-agent
 
 jobs:
   # ========================================================
-  # STAGE 1: LINTING & KUBERNETES MANIFEST VALIDATION
+  # STAGE 1: LINT + RENDER + SCHEMA VALIDATION
   # ========================================================
   lint-and-validate:
-    name: "Lint & Validate K8s Manifests"
+    name: "Lint, Render & Validate K8s Manifests"
     runs-on: ubuntu-latest
     steps:
-      - name: "Checkout Code"
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: "Set up YAML Lint"
-        run: sudo apt-get update && sudo apt-get install -y yamllint
-
-      - name: "Run YAML Lint"
+      - name: "YAML lint"
         run: |
-          yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}}}" k8s/
+          sudo apt-get update && sudo apt-get install -y yamllint shellcheck
+          yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}}}" k8s/ .github/
 
-      - name: "Install Kubeconform"
+      - name: "Shellcheck scripts"
+        run: shellcheck scripts/*.sh
+
+      - name: "Python syntax check"
+        run: python3 -m py_compile mcp_agent/server.py scripts/test_k8s_simulation.py scripts/mock_triton_server.py
+
+      - name: "Install kubeconform"
         run: |
           curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.4/kubeconform-linux-amd64.tar.gz | tar xz
           sudo mv kubeconform /usr/local/bin/
 
-      - name: "Validate K8s Manifests with Kubeconform"
+      - name: "Render every overlay with kustomize and validate schemas"
         run: |
-          kubeconform -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' k8s/base/
+          for dir in k8s/base k8s/overlays/cpu-demo k8s/overlays/gpu k8s/overlays/local-cpu k8s/overlays/local-gpu k8s/addons/operator-stack; do
+            echo "::group::$dir"
+            kubectl kustomize "$dir" | kubeconform -summary -strict -ignore-missing-schemas \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+            echo "::endgroup::"
+          done
 
   # ========================================================
-  # STAGE 2: SECURITY SCANNING (TRIVY)
+  # STAGE 2: SECURITY SCANNING OF MANIFESTS (TRIVY)
   # ========================================================
   security-audit:
     name: "Security & Misconfiguration Audit"
     runs-on: ubuntu-latest
     needs: lint-and-validate
+    permissions:
+      contents: read
+      security-events: write
     steps:
-      - name: "Checkout Code"
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: "Run Trivy Vulnerability Scanner on IaC / K8s"
-        uses: aquasecurity/trivy-action@master
+      - name: "Trivy IaC scan (fails on CRITICAL)"
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'config'
           scan-ref: 'k8s/'
           format: 'table'
-          exit-code: '0'
-          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          severity: 'CRITICAL'
 
-  # ========================================================
-  # STAGE 3: BUILD & CONTAINER SECURITY SCAN
-  # ========================================================
-  build-and-scan-image:
-    name: "Build & Scan MCP Agent"
-    runs-on: ubuntu-latest
-    needs: security-audit
-    if: github.event_name == 'push'
-    steps:
-      - name: "Checkout Code"
-        uses: actions/checkout@v4
-
-      - name: "Set up Docker Buildx"
-        uses: docker/setup-buildx-action@v3
-
-      - name: "Build MCP Agent Image locally for scanning"
-        run: |
-          docker build -t mcp-agent:${{ github.sha }} ./mcp_agent
-
-      - name: "Scan Docker Image with Trivy"
-        uses: aquasecurity/trivy-action@master
+      - name: "Trivy IaC scan (report HIGH, SARIF)"
+        uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: 'mcp-agent:${{ github.sha }}'
-          format: 'table'
+          scan-type: 'config'
+          scan-ref: 'k8s/'
+          format: 'sarif'
+          output: 'trivy-config.sarif'
           exit-code: '0'
+          severity: 'HIGH,CRITICAL'
+
+      - name: "Upload SARIF"
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-config.sarif
+
+  # ========================================================
+  # STAGE 3: INTEGRATION TEST ON A REAL (KIND) CLUSTER
+  # ========================================================
+  integration-test:
+    name: "Deploy to kind & run test procedure"
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Create kind cluster"
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: ci
+
+      - name: "Build MCP agent image and load into kind"
+        run: |
+          docker build -t mcp-agent:local ./mcp_agent
+          kind load docker-image mcp-agent:local --name ci
+
+      - name: "Deploy (local-cpu overlay)"
+        run: |
+          ./scripts/bootstrap_secrets.sh
+          kubectl apply -k k8s/overlays/local-cpu
+          kubectl -n inference-monitoring rollout status statefulset/prometheus --timeout=240s
+          for d in grafana alertmanager mcp-agent triton-server; do
+            kubectl -n inference-monitoring rollout status deployment/$d --timeout=240s
+          done
+          kubectl -n inference-monitoring get pods,pvc,svc,ingress
+
+      - name: "Security audit script"
+        run: ./scripts/verify_security.sh
+
+      - name: "Run load / alert / hot-reload test procedure"
+        run: |
+          pip install httpx
+          kubectl -n inference-monitoring port-forward svc/triton-service 8000:8000 &
+          kubectl -n inference-monitoring port-forward svc/prometheus-service 9090:9090 &
+          kubectl -n inference-monitoring port-forward svc/mcp-agent-service 5000:5000 &
+          kubectl -n inference-monitoring port-forward svc/grafana-service 3000:3000 &
+          sleep 5
+          curl -fsS http://localhost:3000/grafana/api/health
+          REPORT_PATH=test-report.json python3 scripts/test_k8s_simulation.py | tee test-output.log
+
+      - name: "Dump cluster state on failure"
+        if: failure()
+        run: |
+          kubectl -n inference-monitoring get all,events || true
+          kubectl -n inference-monitoring logs --all-containers --tail=100 -l app.kubernetes.io/part-of=inference-monitoring || true
+
+      - name: "Upload test report"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            test-report.json
+            test-output.log
+
+  # ========================================================
+  # STAGE 4: BUILD, SCAN AND PUSH IMAGE
+  # ========================================================
+  build-scan-push:
+    name: "Build, Scan & Push MCP Agent"
+    runs-on: ubuntu-latest
+    needs: [security-audit, integration-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: "Build image (local, for scanning)"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp_agent
+          load: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: "Trivy image scan"
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: '${{ env.IMAGE }}:${{ github.sha }}'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
 
-  # ========================================================
-  # STAGE 4: GITOPS DEPLOY TRIGGER (ARGOCD)
-  # ========================================================
-  gitops-sync:
-    name: "GitOps Manifest Update"
-    runs-on: ubuntu-latest
-    needs: build-and-scan-image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: "Checkout Code"
-        uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "Record GitOps Release Event"
+      - name: "Push image"
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp_agent
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+  # ========================================================
+  # STAGE 5: GITOPS - BUMP IMAGE TAG IN GIT (ARGOCD RECONCILES)
+  # ========================================================
+  gitops-bump:
+    name: "GitOps: update image tag in overlays"
+    runs-on: ubuntu-latest
+    needs: build-scan-push
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Set new image tag in overlays"
         run: |
-          echo "Image mcp-agent:${{ github.sha }} verified by Security Pipeline."
-          echo "ArgoCD will automatically reconcile cluster state."
+          for f in k8s/overlays/cpu-demo/kustomization.yaml k8s/overlays/gpu/kustomization.yaml; do
+            sed -i "s|^\(\s*newTag:\).*|\1 ${{ github.sha }}|" "$f"
+          done
+          kubectl kustomize k8s/overlays/cpu-demo | grep "image: ${IMAGE}:${{ github.sha }}"
+
+      - name: "Commit and push (ArgoCD detects the change)"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays
+          git diff --cached --quiet && exit 0
+          git commit -m "ci: deploy mcp-agent ${{ github.sha }} [skip ci]"
+          git push

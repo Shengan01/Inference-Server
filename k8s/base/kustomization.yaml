@@ -12,11 +12,14 @@ resources:
   - prometheus/alerting-rules.yaml
   - prometheus/statefulset.yaml
   - prometheus/service.yaml
-  - grafana/secret.yaml
   - grafana/configmap-datasources.yaml
   - grafana/configmap-dashboards.yaml
+  - grafana/pvc.yaml
   - grafana/deployment.yaml
   - grafana/service.yaml
+  - alertmanager/configmap.yaml
+  - alertmanager/deployment.yaml
+  - alertmanager/service.yaml
   - triton/model-configmap.yaml
   - triton/service.yaml
   - mcp-agent/service.yaml

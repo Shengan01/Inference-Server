@@ -10,8 +10,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/shengan/Inference-Server.git' # Replace with user's repository URL
-    targetRevision: HEAD
+    repoURL: 'https://github.com/Shengan01/Inference-Server.git'
+    targetRevision: main
     path: k8s/overlays/cpu-demo
   destination:
     server: 'https://kubernetes.default.svc'

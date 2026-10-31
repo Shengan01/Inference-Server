@@ -7,3 +7,9 @@ resources:
   - ../../base
   - mock-configmap.yaml
   - mock-deployment.yaml
+
+# The tag is bumped automatically by the CI/CD pipeline (gitops-bump job).
+images:
+  - name: mcp-agent
+    newName: ghcr.io/shengan01/mcp-agent
+    newTag: latest

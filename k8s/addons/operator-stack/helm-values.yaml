@@ -1,0 +1,33 @@
+# Values for the kube-prometheus-stack Helm chart (prometheus-community).
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm upgrade --install kps prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace --version 58.2.2 \
+#     -f k8s/addons/operator-stack/helm-values.yaml
+#   kubectl apply -k k8s/addons/operator-stack
+fullnameOverride: kps
+
+prometheus:
+  prometheusSpec:
+    # Pick up ServiceMonitors / PrometheusRules from any namespace,
+    # not only those labelled with the Helm release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 15d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+alertmanager:
+  enabled: true
+
+grafana:
+  enabled: true
+  # Admin password is read from a pre-created Secret (not stored in Git).
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password

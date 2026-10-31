@@ -6,3 +6,9 @@ namespace: inference-monitoring
 resources:
   - ../../base
   - triton-deployment.yaml
+
+# The tag is bumped automatically by the CI/CD pipeline (gitops-bump job).
+images:
+  - name: mcp-agent
+    newName: ghcr.io/shengan01/mcp-agent
+    newTag: latest

@@ -107,20 +107,29 @@ async def run_traffic_phase(
         p95_latency_ms=p95_lat
     )
 
-async def check_prometheus_metrics():
+async def check_prometheus_metrics() -> Dict[str, Any]:
+    """Verify scrape targets are healthy and the alert rules are loaded."""
     print("\n[INFO] Sprawdzanie metryk w Prometheusie...")
+    info: Dict[str, Any] = {"targets_up": 0, "targets_total": 0, "alert_rules": 0, "firing": [], "ok": False}
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(f"{PROMETHEUS_URL}/api/v1/query?query=up", timeout=5.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                print("   [OK] Prometheus API odpowiada. Targety 'up':", len(data.get("data", {}).get("result", [])))
-            else:
-                print(f"   [WARN] Prometheus zwrocil kod: {resp.status_code}")
+            resp = await client.get(f"{PROMETHEUS_URL}/api/v1/targets", timeout=5.0)
+            targets = resp.json().get("data", {}).get("activeTargets", [])
+            info["targets_total"] = len(targets)
+            info["targets_up"] = sum(1 for t in targets if t.get("health") == "up")
+            resp = await client.get(f"{PROMETHEUS_URL}/api/v1/rules", timeout=5.0)
+            groups = resp.json().get("data", {}).get("groups", [])
+            info["alert_rules"] = sum(len(g.get("rules", [])) for g in groups)
+            resp = await client.get(f"{PROMETHEUS_URL}/api/v1/alerts", timeout=5.0)
+            alerts = resp.json().get("data", {}).get("alerts", [])
+            info["firing"] = sorted({a["labels"].get("alertname") for a in alerts if a.get("state") == "firing"})
+            info["ok"] = info["targets_total"] > 0 and info["targets_up"] == info["targets_total"] and info["alert_rules"] > 0
+            print(f"   [{'OK' if info['ok'] else 'FAIL'}] Targety up: {info['targets_up']}/{info['targets_total']} | reguly alertow: {info['alert_rules']} | firing: {info['firing']}")
         except Exception as e:
-            print(f"   [WARN] Nie udalo sie polaczyc z Prometheus ({PROMETHEUS_URL}): {e}")
+            print(f"   [FAIL] Nie udalo sie polaczyc z Prometheus ({PROMETHEUS_URL}): {e}")
+    return info
 
-async def trigger_reconfiguration(strategy: str):
+async def trigger_reconfiguration(strategy: str) -> bool:
     print(f"\n[SRE] Wywolanie rekonfiguracji przez MCP Agent (strategia='{strategy}')...")
     async with httpx.AsyncClient() as client:
         try:
@@ -130,8 +139,10 @@ async def trigger_reconfiguration(strategy: str):
                 timeout=10.0
             )
             print(f"   [OK] Odpowiedz MCP Agenta: {resp.status_code} - {resp.text}")
+            return resp.status_code == 200
         except Exception as e:
             print(f"   [ERROR] Blad podczas rekonfiguracji: {e}")
+            return False
 
 async def main():
     print("==========================================================")
@@ -165,12 +176,12 @@ async def main():
     results.append(res2)
 
     # Faza 3: Interwencja Agenta SRE (The Resolution)
-    await trigger_reconfiguration("aggressive")
+    reconfigured = await trigger_reconfiguration("aggressive")
     res3 = await run_traffic_phase("3. THE RESOLUTION (Po rekonfiguracji klastra)", target_rps=150, duration_s=15)
     results.append(res3)
 
     # Sprawdzenie metryk w Prometheus
-    await check_prometheus_metrics()
+    prom = await check_prometheus_metrics()
 
     # Podsumowanie
     print("\n==========================================================")
@@ -181,6 +192,29 @@ async def main():
     for r in results:
         print(f"{r.phase_name:<38} | {r.target_rps:<5} | {r.avg_latency_ms:>8.2f} ms    | {r.p95_latency_ms:>8.2f} ms    | {r.successful_requests}/{r.requests_sent}")
     print("==========================================================")
+
+    # Kryteria PASS/FAIL (zgodne z procedura testowa w docs/)
+    checks = {
+        "baseline_success_rate>=95%": res1.requests_sent > 0 and res1.successful_requests / res1.requests_sent >= 0.95,
+        "reconfigure_endpoint_200": reconfigured,
+        "post_reconfig_success_rate>=95%": res3.requests_sent > 0 and res3.successful_requests / res3.requests_sent >= 0.95,
+        "prometheus_targets_up_and_rules_loaded": prom["ok"],
+    }
+    for name, ok in checks.items():
+        print(f"[{'PASS' if ok else 'FAIL'}] {name}")
+
+    report_path = os.getenv("REPORT_PATH", "test-report.json")
+    with open(report_path, "w") as f:
+        json.dump({
+            "phases": [r.__dict__ for r in results],
+            "prometheus": prom,
+            "checks": checks,
+        }, f, indent=2)
+    print(f"Raport zapisano do {report_path}")
+
+    if not all(checks.values()):
+        print("Testy zakonczone NIEPOWODZENIEM.")
+        sys.exit(1)
     print("Testy zakonczone pomyslnie. Dane zarejestrowane w Prometheusie i Grafanie.")
 
 if __name__ == "__main__":

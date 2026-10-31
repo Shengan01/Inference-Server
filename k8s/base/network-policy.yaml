@@ -78,6 +78,14 @@ spec:
       ports:
         - protocol: TCP
           port: 5000
+    # Allow Prometheus to push alerts to Alertmanager
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+      ports:
+        - protocol: TCP
+          port: 9093
     # Allow self scrape
     - to:
         - podSelector:
@@ -198,3 +206,24 @@ spec:
           port: 8000
         - protocol: TCP
           port: 8001
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alertmanager
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Ingress
+  ingress:
+    # Prometheus delivers firing alerts
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9093

@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: inference-monitoring
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: grafana
@@ -44,6 +46,10 @@ spec:
                   key: admin-password
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
+            - name: GF_SERVER_ROOT_URL
+              value: "%(protocol)s://%(domain)s/grafana/"
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
           resources:
             requests:
               cpu: 100m
@@ -58,13 +64,13 @@ spec:
                 - ALL
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /grafana/api/health
               port: 3000
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /grafana/api/health
               port: 3000
             initialDelaySeconds: 20
             periodSeconds: 20
@@ -97,4 +103,5 @@ spec:
               - key: inference-cluster.json
                 path: inference-cluster.json
         - name: grafana-storage
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: grafana-storage

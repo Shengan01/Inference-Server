@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-operator-prometheus-scrape
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [triton-server, mcp-agent]
+  policyTypes:
+    - Ingress
+  ingress:
+    # Prometheus from the kube-prometheus-stack release (namespace "monitoring")
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8002
+        - protocol: TCP
+          port: 5000

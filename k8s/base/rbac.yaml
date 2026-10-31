@@ -72,3 +72,12 @@ metadata:
   labels:
     app.kubernetes.io/name: triton-server
     app.kubernetes.io/part-of: inference-monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager-sa
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: inference-monitoring

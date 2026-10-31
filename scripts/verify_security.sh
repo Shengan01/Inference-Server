@@ -27,6 +27,9 @@ echo ""
 echo "[3] Weryfikacja NetworkPolicies (Zero Trust)..."
 kubectl get networkpolicies -n $NAMESPACE
 
+echo "Czy w repozytorium/klastrze nie ma jawnego hasla Grafany w manifestach? (Oczekiwane: brak trafien)"
+! grep -rn "admin-password:" k8s/ || { echo "BLAD: jawne haslo w manifestach"; exit 1; }
+
 echo ""
 echo "[4] Weryfikacja ResourceQuota i LimitRange..."
 kubectl get resourcequota -n $NAMESPACE

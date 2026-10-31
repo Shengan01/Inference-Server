@@ -1,0 +1,54 @@
+# Optional profile: Prometheus Operator (kube-prometheus-stack, Helm) plus the
+# ServiceMonitors / PrometheusRule for this project.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: 'https://prometheus-community.github.io/helm-charts'
+      chart: kube-prometheus-stack
+      targetRevision: 58.2.2
+      helm:
+        valueFiles:
+          - $values/k8s/addons/operator-stack/helm-values.yaml
+    - repoURL: 'https://github.com/Shengan01/Inference-Server.git'
+      targetRevision: main
+      ref: values
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: operator-stack-resources
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/Shengan01/Inference-Server.git'
+    targetRevision: main
+    path: k8s/addons/operator-stack
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: inference-monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true

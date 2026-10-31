@@ -18,10 +18,10 @@ The Autonomic Inference Cluster provides automated performance management and mo
 
 Key workflow during high traffic load:
 1. **Metrics Collection:** Prometheus scrapes inference metrics (latency, queue duration, VRAM, request count) at 1-second intervals.
-2. **Alert Evaluation:** Declarative alerting rules (`PrometheusRule`) track thresholds for latency and queue buildup.
+2. **Alert Evaluation:** Alerting rules (ConfigMap in the standalone profile, `PrometheusRule` in the operator profile) track thresholds for latency and queue buildup; firing alerts are delivered to Alertmanager.
 3. **Control Loop (MCP Agent):** A Python-based agent queries Prometheus via PromQL and determines optimal runtime parameters.
 4. **Dynamic Reconfiguration:** The agent updates model configuration (`max_num_seqs`, `gpu_memory_utilization`) and triggers a zero-downtime hot reload.
-5. **Continuous Deployment:** Cluster configuration is synchronized via ArgoCD, with linting, schema validation (`kubeconform`), and vulnerability scanning (`trivy`) run in GitHub Actions.
+5. **Continuous Deployment:** GitHub Actions lints and validates every overlay, scans it with Trivy, runs the test procedure on a `kind` cluster, pushes the agent image to `ghcr.io` and bumps the image tag in Git; ArgoCD reconciles the cluster from Git.
 
 ---
 
@@ -35,57 +35,80 @@ flowchart TD
     classDef obs fill:#0e462a,stroke:#4ade80,stroke-width:2px,color:#ffffff;
     classDef sec fill:#5c1d24,stroke:#f87171,stroke-width:2px,color:#ffffff;
     classDef storage fill:#522e0a,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
+    classDef cicd fill:#3b1d5c,stroke:#c084fc,stroke-width:2px,color:#ffffff;
+
+    subgraph Delivery ["Delivery: CI/CD and GitOps"]
+        DEV["Developer<br/>git push"]:::client
+        GHA["GitHub Actions<br/>lint, kubeconform, Trivy,<br/>kind integration test"]:::cicd
+        GHCR[("ghcr.io<br/>mcp-agent image")]:::storage
+        GIT["Git repository<br/>k8s/overlays, image tag"]:::cicd
+        ARGO["ArgoCD<br/>auto-sync + self-heal"]:::cicd
+    end
 
     subgraph External ["Traffic and Management"]
-        USER["Inference Clients / Test Load"]:::client
+        USER["Inference clients / test load"]:::client
         ADMIN["SRE and Operations"]:::client
     end
 
-    subgraph IngressLayer ["Ingress Layer"]
-        ING["NGINX Ingress Controller\ninference.local"]:::k8s
-    end
+    LB["LoadBalancer / minikube tunnel<br/>inference.local, TLS"]:::k8s
+    ING["NGINX Ingress Controller"]:::k8s
+
+    CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
 
     subgraph Cluster ["Namespace: inference-monitoring"]
         direction TB
 
         subgraph SecurityControls ["Security Controls"]
-            NP["NetworkPolicies\n(default-deny + allow rules)"]:::sec
-            RBAC["RBAC: ServiceAccounts\n(Least Privilege, Read-Only)"]:::sec
-            QUOTA["ResourceQuota & LimitRange\n(CPU: 4 cores, RAM: 8Gi)"]:::sec
+            NP["NetworkPolicies<br/>default-deny + allow rules"]:::sec
+            QUOTA["ResourceQuota and LimitRange<br/>CPU 4 cores, RAM 8Gi"]:::sec
         end
 
         subgraph ObservabilityLayer ["Observability Layer"]
-            PROM["Prometheus Server\n(StatefulSet, :9090)"]:::obs
-            GRAF["Grafana Dashboard\n(Deployment, :3000)"]:::obs
-            PVC[("PersistentVolumeClaim\nprometheus-storage (2Gi)")]:::storage
-            RULES["Prometheus Alerting Rules\n(HighLatency, QueueStall)"]:::obs
+            PROM["Prometheus<br/>StatefulSet, :9090"]:::obs
+            RULES["Alerting rules<br/>ConfigMap, 4 alerts"]:::obs
+            AM["Alertmanager<br/>Deployment, :9093"]:::obs
+            GRAF["Grafana<br/>Deployment, :3000, /grafana"]:::obs
+            PVC1[("PVC prometheus-storage 2Gi")]:::storage
+            PVC2[("PVC grafana-storage 1Gi")]:::storage
         end
 
         subgraph CoreWorkloads ["Inference and Control Workloads"]
-            TRITON["Triton Inference Server\n(Deployment, :8000 / :8002)"]:::k8s
-            AGENT["MCP Agent and Custom Exporter\n(Deployment, Python, :5000)"]:::k8s
-            CM["ConfigMaps & Secrets\n(Dashboards, Model Config, Creds)"]:::storage
+            TRITON["Triton Inference Server<br/>Deployment, :8000 / :8002<br/>mock on cpu-demo"]:::k8s
+            AGENT["MCP Agent and custom exporter<br/>Deployment, Python, :5000"]:::k8s
+            CM["ConfigMaps<br/>dashboards, datasource, model config"]:::storage
+            SEC["Secrets, created out of band<br/>grafana-secret, inference-tls"]:::storage
         end
     end
 
-    USER -->|HTTP /v2/models| ING
-    ADMIN -->|HTTP /grafana| ING
+    DEV --> GHA
+    GHA -->|push image| GHCR
+    GHA -->|bump image tag| GIT
+    ARGO -->|poll| GIT
+    ARGO -->|apply overlay| Cluster
+    GHCR -.->|image pull| AGENT
 
+    USER -->|HTTPS /v2| LB
+    ADMIN -->|HTTPS /grafana, /mcp| LB
+    LB --> ING
     ING -->|/grafana| GRAF
     ING -->|/v2| TRITON
     ING -->|/mcp| AGENT
 
-    PROM -->|Scrape :8002/metrics| TRITON
-    PROM -->|Scrape :5000/metrics/config| AGENT
-    PROM -->|Write TSDB| PVC
-    PROM -.->|Evaluate Alerts| RULES
+    PROM -->|scrape :8002/metrics| TRITON
+    PROM -->|scrape :5000/metrics/config| AGENT
+    PROM -->|TSDB| PVC1
+    PROM -.->|evaluate| RULES
+    PROM -->|firing alerts| AM
+    GRAF -->|PromQL :9090| PROM
+    GRAF --> PVC2
+    AGENT -->|PromQL :9090| PROM
+    AGENT -->|hot-reload :8000| TRITON
 
-    GRAF -->|PromQL Proxy :9090| PROM
-    AGENT -->|PromQL Analysis :9090| PROM
-    AGENT -->|Hot-Reload API :8000| TRITON
-
-    CM -.->|Auto-Provision Dashboards| GRAF
-    CM -.->|Init Config Seed| AGENT
+    CM -.->|provisioning| GRAF
+    CM -.->|config seed| AGENT
+    SEC -.-> GRAF
+    SEC -.-> ING
+    CR -.->|bound to prometheus-sa| PROM
 ```
 
 ---
@@ -95,13 +118,16 @@ flowchart TD
 ### 1. Kubernetes Workload Design
 * **StatefulSet and Deployment Separation:** Prometheus runs as a `StatefulSet` with persistent volume backing (`PersistentVolumeClaim`) for TSDB data persistence. Grafana, Triton, and the MCP Agent run as stateless `Deployments`.
 * **Zero-Downtime Hot-Reload:** Uses an `initContainer` pattern to initialize a writable configuration volume seeded from a `ConfigMap`.
-* **Automated Provisioning:** Datasources and dashboard configurations are loaded automatically when Grafana starts.
+* **Automated Provisioning:** Datasources and dashboard configurations are loaded automatically when Grafana starts. Grafana state lives on its own PVC and is served under `/grafana` behind the Ingress.
+* **Alertmanager:** Prometheus forwards firing alerts to an Alertmanager Deployment (no external receiver configured by default).
+* **Operator profile (optional):** `k8s/addons/operator-stack` provides `ServiceMonitor` and `PrometheusRule` resources plus Helm values for `kube-prometheus-stack`, deployed by a second ArgoCD Application.
 
 ### 2. Security Hardening and DevSecOps
 * **Pod Security Standards:** Workloads run with `runAsNonRoot: true`, non-zero UIDs (472, 10001, 65534), `allowPrivilegeEscalation: false`, and `capabilities: drop: ["ALL"]`.
 * **Network Segmentation:** Enforces `default-deny-all` baseline traffic policies; pod communication is permitted only on explicit service ports.
 * **Least Privilege RBAC:** Prometheus uses dedicated `ServiceAccount` and `ClusterRole` resources with read-only access to nodes, pods, and endpoints.
-* **Pipeline Auditing:** The CI/CD workflow uses `yamllint` for syntax, `kubeconform` for Kubernetes schema validation, and `trivy` for vulnerability scanning.
+* **Secrets out of Git:** The Grafana admin password and the Ingress TLS certificate are generated by `scripts/bootstrap_secrets.sh`; no credentials are stored in the repository.
+* **Pipeline Auditing:** The CI/CD workflow uses `yamllint`, `shellcheck`, `kubeconform` (all rendered overlays), `trivy` (IaC scan fails on CRITICAL, image scan fails on fixable HIGH/CRITICAL) and an end-to-end test on `kind`.
 
 ### 3. Dual Runtime Profiles
 * **`k8s/overlays/gpu`:** Production profile requesting physical NVIDIA GPU resources (`nvidia.com/gpu: 1`) for Triton + vLLM.
@@ -109,7 +135,9 @@ flowchart TD
 
 ### 4. GitOps Workflow
 * Declarative application configuration managed by ArgoCD (`k8s/gitops/argocd-application.yaml`).
-* Continuous reconciliation between repository state and cluster resources.
+* Continuous reconciliation between repository state and cluster resources (automated sync, prune, self-heal).
+* The `gitops-bump` CI job commits the new `mcp-agent` image tag (`ghcr.io/shengan01/mcp-agent`) to the overlays, which is what triggers the rollout. The package must be public (or an image pull secret configured) for the cluster to pull it.
+* Secrets must exist before the first sync: run `./scripts/bootstrap_secrets.sh` once against the target cluster.
 
 ---
 
@@ -131,17 +159,23 @@ Deploy to Minikube with required addons and health checks:
 ```
 
 ### 2. Service Access
-Expose cluster services to the host:
+Grafana, Triton and the MCP Agent are exposed through the NGINX Ingress (TLS, self-signed certificate):
 ```bash
-./scripts/start_port_forward.sh &
+echo "$(minikube ip) inference.local" | sudo tee -a /etc/hosts
+# or, for a LoadBalancer address, run in a separate terminal: minikube tunnel
+kubectl -n inference-monitoring get secret grafana-secret -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
-| Service | Local Address | Credentials | Description |
+| Service | Address | Credentials | Description |
 | :--- | :--- | :--- | :--- |
-| **Grafana** | [http://localhost:3000](http://localhost:3000) | `admin` / `admin_k8s_secure_2026!` | Pre-configured dashboard |
-| **Prometheus** | [http://localhost:9090](http://localhost:9090) | None | Metrics, targets, and active alerts |
-| **Triton Server** | [http://localhost:8000](http://localhost:8000/v2/health/ready) | None | Inference and health endpoints |
-| **MCP Agent** | [http://localhost:5000](http://localhost:5000/health) | None | Reconfiguration API and `/metrics/config` |
+| **Grafana** | `https://inference.local/grafana/` | `admin` / generated password | Pre-configured dashboard |
+| **Triton Server** | `https://inference.local/v2/health/ready` | None | Inference and health endpoints |
+| **MCP Agent** | `https://inference.local/mcp/health` | None | Reconfiguration API and `/metrics/config` |
+
+Prometheus and Alertmanager have no Ingress route (they are unauthenticated); reach them with port-forwarding:
+```bash
+./scripts/start_port_forward.sh &   # Prometheus :9090, Alertmanager :9093, plus local Triton/Agent/Grafana ports
+```
 
 ### 3. Security Verification
 Run the automated RBAC, network policy, and container permission check:
@@ -150,7 +184,7 @@ Run the automated RBAC, network policy, and container permission check:
 ```
 
 ### 4. Load and Reconfiguration Testing
-Execute the test procedure:
+Execute the test procedure (needs the port-forwards above). It exits non-zero when a check fails and writes `test-report.json`; the same procedure runs in CI on `kind` and uploads the report as a build artifact:
 ```bash
 python3 scripts/test_k8s_simulation.py
 ```
@@ -165,7 +199,7 @@ python3 scripts/test_k8s_simulation.py
 ```
 ├── .github/
 │   └── workflows/
-│       └── ci-cd.yaml               # CI/CD pipeline (Yamllint, Kubeconform, Trivy)
+│       └── ci-cd.yaml               # CI/CD: lint, kubeconform, Trivy, kind test, ghcr push, GitOps bump
 ├── docs/
 │   ├── DOKUMENTACJA_TECHNICZNA.md   # Technical documentation
 │   └── ZADANIE_2_OPIS_I_ARCHITEKTURA.md # Architecture specification report
@@ -176,17 +210,23 @@ python3 scripts/test_k8s_simulation.py
 │   │   ├── resource-quota.yaml      # Resource quotas and limit ranges
 │   │   ├── network-policy.yaml      # Network isolation policies
 │   │   ├── prometheus/              # Prometheus StatefulSet, PVC, alerts, service
-│   │   ├── grafana/                 # Grafana Deployment, datasources, dashboards
+│   │   ├── grafana/                 # Grafana Deployment, PVC, datasources, dashboards
+│   │   ├── alertmanager/            # Alertmanager Deployment, config, service
 │   │   ├── triton/                  # Triton service and model configuration
 │   │   ├── mcp-agent/               # MCP Agent Deployment and service
 │   │   └── ingress/                 # Ingress routing rules
 │   ├── overlays/
-│   │   ├── cpu-demo/                # Lightweight CPU demonstration overlay
-│   │   └── gpu/                     # GPU production overlay
+│   │   ├── cpu-demo/                # Lightweight CPU demonstration overlay (registry image)
+│   │   ├── gpu/                     # GPU production overlay (registry image)
+│   │   └── local-cpu, local-gpu/    # Same, using the locally built mcp-agent image
+│   ├── addons/
+│   │   └── operator-stack/          # ServiceMonitors, PrometheusRule, Helm values (kube-prometheus-stack)
 │   └── gitops/
-│       └── argocd-application.yaml  # ArgoCD Application resource
+│       ├── argocd-application.yaml          # Core stack Application
+│       └── argocd-application-operator.yaml # Operator profile Applications
 ├── scripts/
 │   ├── deploy_minikube.sh           # Deployment automation script
+│   ├── bootstrap_secrets.sh         # Creates Grafana and TLS secrets (not stored in Git)
 │   ├── mock_triton_server.py        # Lightweight mock Triton server
 │   ├── test_k8s_simulation.py       # Load testing and verification script
 │   ├── verify_security.sh           # Security audit script
@@ -211,7 +251,7 @@ python3 scripts/test_k8s_simulation.py
 * `nv_gpu_memory_used_bytes` / `nv_gpu_memory_total_bytes`: VRAM allocation.
 * `triton_config_max_num_seqs`: Active batch parallelism setting.
 
-### Alert Definitions (`PrometheusRule`)
+### Alert Definitions (`k8s/base/prometheus/alerting-rules.yaml`, mirrored as `PrometheusRule` in the operator profile)
 1. **`InferenceServerDown`** (`critical`): Triggered if Triton target is unreachable for > 10s.
 2. **`HighInferenceLatency`** (`warning`): Triggered if average latency exceeds 50 ms for > 15s.
 3. **`HighInferenceQueueDepth`** (`warning`): Triggered if queue latency exceeds 100 ms for > 15s.

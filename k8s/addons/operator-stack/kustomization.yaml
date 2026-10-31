@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Prometheus Operator profile: custom resources consumed by kube-prometheus-stack
+# (installed with Helm, see k8s/addons/operator-stack/helm-values.yaml).
+# Requires the monitoring.coreos.com CRDs, so it is NOT part of k8s/base.
+namespace: inference-monitoring
+
+resources:
+  - servicemonitors.yaml
+  - prometheusrule.yaml
+  - network-policy.yaml

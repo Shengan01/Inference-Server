@@ -1,0 +1,37 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: triton
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/part-of: inference-monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: triton-server
+  namespaceSelector:
+    matchNames:
+      - inference-monitoring
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mcp-agent-config
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/part-of: inference-monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-agent
+  namespaceSelector:
+    matchNames:
+      - inference-monitoring
+  endpoints:
+    - port: http-mcp
+      path: /metrics/config
+      interval: 5s
