@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Fix HIGH CVEs found by Trivy in transitive/base packages
-RUN pip install --no-cache-dir --upgrade "wheel>=0.46.2" "jaraco.context>=6.1.0"
+# Build tooling is not needed at runtime; setuptools/wheel vendor vulnerable
+# copies of jaraco.context and wheel (HIGH CVEs reported by Trivy).
+RUN pip uninstall -y setuptools wheel
 
 # Copy application code
 COPY . .
