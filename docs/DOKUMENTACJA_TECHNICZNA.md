@@ -298,10 +298,19 @@ Procedura weryfikuje odporność systemu w trzech kluczowych aktach:
 ### 7.2. Raport Wyników z Realizacji Testu
 Skrypt kończy się kodem != 0, jeśli nie są spełnione kryteria PASS: (1) skuteczność żądań w fazie bazowej ≥ 95%, (2) endpoint `/reconfigure` zwraca 200, (3) skuteczność po rekonfiguracji ≥ 95%, (4) wszystkie cele Prometheusa są `up` i reguły alertów są załadowane. Wyniki zapisuje do `test-report.json`.
 
-Wiarygodne wyniki pochodzą z uruchomienia na klastrze: job `integration-test` w GitHub Actions publikuje artefakt `test-report` (JSON + log) dla każdego builda. **Do sprawozdania należy wkleić liczby z tego artefaktu (lub z lokalnego uruchomienia na Minikube) oraz zrzuty ekranu z Grafany i Prometheusa:**
+Poniżej wyniki z przebiegu CI (job `integration-test`, klaster `kind` na runnerze GitHub Actions, run [41237028308](https://github.com/Shengan01/Inference-Server/actions/runs/41237028308), commit `eaca180`; artefakt `test-report`). Każdy kolejny build publikuje nowy raport.
 
-| Faza Testowa | Ruch (RPS) | Wysłane Żądania | Pomyślne (%) | Śr. Latencja (ms) | P95 Latencja (ms) | Status Alertów |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| Faza Testowa | Ruch (RPS) | Wysłane Żądania | Pomyślne (%) | Śr. Latencja (ms) | P95 Latencja (ms) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **1. THE CALM** | 20 | 40 | 100% | 1024.3 | 1027.6 |
+| **2. THE STORM** | 150 | 210 | 97.6% | 1472.5 | 2308.9 |
+| **3. THE RESOLUTION** | 150 | 240 | 98.3% | 1513.9 | 2116.9 |
+
+Kryteria PASS: wszystkie 4 spełnione (skuteczność ≥ 95% w fazach 1 i 3, `/reconfigure` zwraca 200, 3 z 3 celów Prometheusa `up`, 4 reguły alertów załadowane). W trakcie testu aktywny był alert `HighInferenceQueueDepth`.
+
+**Ograniczenia pomiaru (ważne przy ocenie wyników):** skrypt mierzy opóźnienie po stronie klienta przez `kubectl port-forward` do jednowątkowego mocka Tritona, więc wartości (~1 s już w fazie bazowej) są zdominowane przez narzut tunelu i kolejkowanie, a nie przez model opóźnień mocka. Test potwierdza poprawność wdrożenia, zbierania metryk, ewaluacji alertów i działania endpointu rekonfiguracji, ale **nie pokazuje wyraźnego spadku opóźnień po hot-reload** (faza 3 nie jest szybsza niż faza 2). Wcześniejsze liczby w tej sekcji (18 / 85 / 27 ms) nie pochodziły z uruchomienia i zostały usunięte. Ocena wpływu rekonfiguracji wymaga pomiaru po stronie serwera (metryki `nv_inference_*` w Prometheusie/Grafanie) albo klienta działającego wewnątrz klastra.
+
+--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **1. THE CALM** | 20 | _z test-report.json_ | _…_ | _…_ | _…_ | _…_ |
 | **2. THE STORM** | 150 | _…_ | _…_ | _…_ | _…_ | _…_ |
 | **3. THE RESOLUTION** | 150 | _…_ | _…_ | _…_ | _…_ | _…_ |
