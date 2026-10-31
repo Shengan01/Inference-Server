@@ -16,7 +16,7 @@ import time
 import json
 import asyncio
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 import httpx
 
@@ -35,6 +35,7 @@ class PhaseResult:
     failed_requests: int
     avg_latency_ms: float
     p95_latency_ms: float
+    server_avg_latency_ms: float = -1.0
 
 async def send_inference_request(client: httpx.AsyncClient) -> float:
     start = time.perf_counter()
@@ -61,33 +62,59 @@ async def send_inference_request(client: httpx.AsyncClient) -> float:
     except Exception:
         return -1.0
 
+async def prom_scalar(client: httpx.AsyncClient, query: str) -> float:
+    resp = await client.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query}, timeout=5.0)
+    result = resp.json().get("data", {}).get("result", [])
+    return float(result[0]["value"][1]) if result else 0.0
+
+async def triton_counters() -> Tuple[float, float]:
+    """Cumulative server-side counters (sum of request duration in us, request count).
+
+    Prometheus scrapes every second, so wait a little before reading to make
+    sure the last requests of the previous phase are included.
+    """
+    await asyncio.sleep(3.0)
+    async with httpx.AsyncClient() as client:
+        try:
+            dur = await prom_scalar(client, "sum(nv_inference_request_duration_us)")
+            cnt = await prom_scalar(client, "sum(nv_inference_request_success)")
+            return dur, cnt
+        except Exception:
+            return 0.0, 0.0
+
+def server_avg_ms(before: Tuple[float, float], after: Tuple[float, float]) -> float:
+    d_us, d_cnt = after[0] - before[0], after[1] - before[1]
+    return d_us / d_cnt / 1000.0 if d_cnt > 0 else -1.0
+
 async def run_traffic_phase(
     phase_name: str,
     target_rps: int,
     duration_s: int
 ) -> PhaseResult:
-    print(f"\n[FAZA] {phase_name}: {target_rps} RPS przez {duration_s}s...")
+    """Send `target_rps` requests concurrently once per second.
+
+    Bursts (instead of a smooth stream) make the number of in-flight requests
+    equal to the target RPS, which is what the engine's batch capacity
+    (max_num_seqs) is compared against. That is what degrades latency under
+    load and what the hot-reload fixes.
+    """
+    print(f"\n[FAZA] {phase_name}: {target_rps} RPS (serie rownoczesne) przez {duration_s}s...")
     latencies: List[float] = []
     success = 0
     failures = 0
     start_time = time.time()
 
-    async with httpx.AsyncClient(limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
+    async with httpx.AsyncClient(limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)) as client:
         while time.time() - start_time < duration_s:
-            batch_start = time.time()
-            batch_size = max(1, target_rps // 5)
-            tasks = [send_inference_request(client) for _ in range(batch_size)]
-            results = await asyncio.gather(*tasks)
-
+            burst_start = time.time()
+            results = await asyncio.gather(*[send_inference_request(client) for _ in range(target_rps)])
             for lat in results:
                 if lat >= 0:
                     success += 1
                     latencies.append(lat)
                 else:
                     failures += 1
-
-            elapsed = time.time() - batch_start
-            sleep_needed = 0.2 - elapsed
+            sleep_needed = 1.0 - (time.time() - burst_start)
             if sleep_needed > 0:
                 await asyncio.sleep(sleep_needed)
 
@@ -95,7 +122,7 @@ async def run_traffic_phase(
     latencies.sort()
     p95_lat = latencies[int(len(latencies) * 0.95)] if latencies else 0.0
 
-    print(f"   [OK] Wyslano: {success + failures} | Sukces: {success} | Sr. latencja: {avg_lat:.2f} ms | P95: {p95_lat:.2f} ms")
+    print(f"   [OK] Wyslano: {success + failures} | Sukces: {success} | Klient sr.: {avg_lat:.2f} ms | Klient P95: {p95_lat:.2f} ms")
     return PhaseResult(
         phase_name=phase_name,
         target_rps=target_rps,
@@ -168,16 +195,23 @@ async def main():
     results: List[PhaseResult] = []
 
     # Faza 1: Spokoj (The Calm)
+    snap0 = await triton_counters()
     res1 = await run_traffic_phase("1. THE CALM (Obciazenie bazowe)", target_rps=20, duration_s=10)
+    snap1 = await triton_counters()
+    res1.server_avg_latency_ms = server_avg_ms(snap0, snap1)
     results.append(res1)
 
     # Faza 2: Skok obciazenia (The Storm)
     res2 = await run_traffic_phase("2. THE STORM (Skok obciazenia - degradacja latencji)", target_rps=150, duration_s=15)
+    snap2 = await triton_counters()
+    res2.server_avg_latency_ms = server_avg_ms(snap1, snap2)
     results.append(res2)
 
     # Faza 3: Interwencja Agenta SRE (The Resolution)
     reconfigured = await trigger_reconfiguration("aggressive")
     res3 = await run_traffic_phase("3. THE RESOLUTION (Po rekonfiguracji klastra)", target_rps=150, duration_s=15)
+    snap3 = await triton_counters()
+    res3.server_avg_latency_ms = server_avg_ms(snap2, snap3)
     results.append(res3)
 
     # Sprawdzenie metryk w Prometheus
@@ -187,10 +221,10 @@ async def main():
     print("\n==========================================================")
     print("PODSUMOWANIE REALIZACJI PROCEDURY TESTOWEJ")
     print("==========================================================")
-    print(f"{'Faza testu':<38} | {'RPS':<5} | {'Sr. Latencja':<14} | {'P95 Latencja':<14} | {'Sukces':<7}")
-    print("-" * 88)
+    print(f"{'Faza testu':<38} | {'RPS':<5} | {'Serwer sr.':<12} | {'Klient sr.':<12} | {'Klient P95':<12} | {'Sukces':<7}")
+    print("-" * 100)
     for r in results:
-        print(f"{r.phase_name:<38} | {r.target_rps:<5} | {r.avg_latency_ms:>8.2f} ms    | {r.p95_latency_ms:>8.2f} ms    | {r.successful_requests}/{r.requests_sent}")
+        print(f"{r.phase_name[:38]:<38} | {r.target_rps:<5} | {r.server_avg_latency_ms:>8.2f} ms | {r.avg_latency_ms:>8.2f} ms | {r.p95_latency_ms:>8.2f} ms | {r.successful_requests}/{r.requests_sent}")
     print("==========================================================")
 
     # Kryteria PASS/FAIL (zgodne z procedura testowa w docs/)
@@ -199,6 +233,10 @@ async def main():
         "reconfigure_endpoint_200": reconfigured,
         "post_reconfig_success_rate>=95%": res3.requests_sent > 0 and res3.successful_requests / res3.requests_sent >= 0.95,
         "prometheus_targets_up_and_rules_loaded": prom["ok"],
+        # Server-side latency (from Prometheus counters), independent of port-forward overhead
+        "storm_degrades_server_latency>2x_baseline_and_>40ms": res2.server_avg_latency_ms > max(40.0, 2.0 * res1.server_avg_latency_ms),
+        "hot_reload_restores_latency<30ms": 0 < res3.server_avg_latency_ms < 30.0,
+        "hot_reload_improves_latency>50%": 0 < res3.server_avg_latency_ms < 0.5 * res2.server_avg_latency_ms,
     }
     for name, ok in checks.items():
         print(f"[{'PASS' if ok else 'FAIL'}] {name}")
