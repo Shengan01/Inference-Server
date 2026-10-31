@@ -11,8 +11,6 @@ ENV/
 # Model checkpoints & cache
 output/
 unsloth_compiled_cache/
-training/output/
-training/unsloth_compiled_cache/
 *.safetensors
 *.bin
 *.pt

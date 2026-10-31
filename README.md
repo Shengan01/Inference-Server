@@ -236,11 +236,7 @@ Latency is computed from Prometheus counters (`nv_inference_request_duration_us 
 │   ├── verify_security.sh           # Security audit script
 │   └── start_port_forward.sh        # Port forwarding helper
 ├── mcp_agent/                       # Agent source code (FastMCP + Prometheus API)
-├── llm_agent/                       # LLM decision loop and RL module
-├── grafana/                         # Provisioning templates and dashboard JSON
-├── prometheus/                      # Standalone Prometheus configuration
-├── triton/                          # Triton Server Dockerfile
-└── docker-compose.yml               # Compose file for standalone local testing
+└── grafana/dashboards/              # Grafana dashboard JSON (source of the dashboard ConfigMap)
 ```
 
 ---
