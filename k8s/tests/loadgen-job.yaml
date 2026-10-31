@@ -1,0 +1,67 @@
+# In-cluster load generator / test procedure. The script comes from the
+# loadgen-script ConfigMap; the image is the mcp-agent image (it already ships
+# httpx), so no internet access is needed. __IMAGE__ is substituted by
+# scripts/run_in_cluster_test.sh.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: loadgen
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: loadgen
+    app.kubernetes.io/part-of: inference-monitoring
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loadgen
+        app.kubernetes.io/part-of: inference-monitoring
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loadgen
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "/scripts/test_k8s_simulation.py"]
+          env:
+            - name: TRITON_URL
+              value: "http://triton-service:8000"
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-service:9090"
+            - name: MCP_AGENT_URL
+              value: "http://mcp-agent-service:5000"
+            - name: REPORT_PATH
+              value: "/tmp/test-report.json"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: loadgen-script
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,55 @@
+# Test-only policies: let the in-cluster load generator reach the services it
+# exercises. Not part of k8s/base (applied by scripts/run_in_cluster_test.sh).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loadgen-egress
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loadgen
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: triton-server
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-agent
+      ports:
+        - protocol: TCP
+          port: 5000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-loadgen-to-prometheus
+  namespace: inference-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loadgen
+      ports:
+        - protocol: TCP
+          port: 9090

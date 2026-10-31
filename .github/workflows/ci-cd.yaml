@@ -13,6 +13,11 @@ permissions:
 env:
   IMAGE: ghcr.io/shengan01/mcp-agent
 
+# bash with -e -o pipefail, so a failing command before a pipe (| tee) fails the step
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # ========================================================
   # STAGE 1: LINT + RENDER + SCHEMA VALIDATION
@@ -48,6 +53,7 @@ jobs:
               -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
             echo "::endgroup::"
           done
+          kubeconform -summary -strict k8s/tests/
 
   # ========================================================
   # STAGE 2: SECURITY SCANNING OF MANIFESTS (TRIVY)
@@ -122,16 +128,14 @@ jobs:
       - name: "Security audit script"
         run: ./scripts/verify_security.sh
 
-      - name: "Run load / alert / hot-reload test procedure"
+      - name: "Grafana reachable under /grafana"
         run: |
-          pip install httpx
-          kubectl -n inference-monitoring port-forward svc/triton-service 8000:8000 &
-          kubectl -n inference-monitoring port-forward svc/prometheus-service 9090:9090 &
-          kubectl -n inference-monitoring port-forward svc/mcp-agent-service 5000:5000 &
           kubectl -n inference-monitoring port-forward svc/grafana-service 3000:3000 &
           sleep 5
           curl -fsS http://localhost:3000/grafana/api/health
-          REPORT_PATH=test-report.json python3 scripts/test_k8s_simulation.py | tee test-output.log
+
+      - name: "Run load / alert / hot-reload test procedure (in-cluster Job)"
+        run: LOADGEN_IMAGE=mcp-agent:local OUT_DIR=. ./scripts/run_in_cluster_test.sh
 
       - name: "Dump cluster state on failure"
         if: failure()

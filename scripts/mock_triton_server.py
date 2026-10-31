@@ -17,6 +17,10 @@ import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
+# Bursts of 100+ simultaneous connections must not overflow the listen backlog.
+ThreadingHTTPServer.request_queue_size = 512
+ThreadingHTTPServer.daemon_threads = True
+
 class SimulationState:
     def __init__(self):
         self.lock = threading.Lock()

@@ -242,13 +242,16 @@ async def main():
         print(f"[{'PASS' if ok else 'FAIL'}] {name}")
 
     report_path = os.getenv("REPORT_PATH", "test-report.json")
+    report = {
+        "phases": [r.__dict__ for r in results],
+        "prometheus": prom,
+        "checks": checks,
+    }
     with open(report_path, "w") as f:
-        json.dump({
-            "phases": [r.__dict__ for r in results],
-            "prometheus": prom,
-            "checks": checks,
-        }, f, indent=2)
+        json.dump(report, f, indent=2)
     print(f"Raport zapisano do {report_path}")
+    # One-line copy so a Job's logs carry the report (see scripts/run_in_cluster_test.sh)
+    print("REPORT_JSON " + json.dumps(report))
 
     if not all(checks.values()):
         print("Testy zakonczone NIEPOWODZENIEM.")
