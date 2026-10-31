@@ -12,4 +12,4 @@ resources:
 images:
   - name: mcp-agent
     newName: ghcr.io/shengan01/mcp-agent
-    newTag: 73976188746c10f0c2311e1fb384e0fee2264569
+    newTag: 7135282c8e834676e0942243da1f27f6ae82fbd5
