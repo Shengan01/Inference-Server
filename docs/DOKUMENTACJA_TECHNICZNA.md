@@ -59,7 +59,7 @@ flowchart TD
         ADMIN["SRE and Operations"]:::client
     end
 
-    LB["LoadBalancer / minikube tunnel<br/>inference.local, TLS"]:::k8s
+    LB["Entry point: minikube IP, NodePort<br/>cloud: LoadBalancer<br/>inference.local, TLS"]:::k8s
     ING["NGINX Ingress Controller"]:::k8s
 
     CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
@@ -144,7 +144,7 @@ flowchart TD
   * `triton-service` (porty 8000, 8001, 8002)
   * `mcp-agent-service` (port 5000)
 * **Ingress:** `inference-monitoring-ingress` (`ingressClassName: nginx`, TLS, host `inference.local`) kieruje `/grafana` i `/v2`; osobny `inference-monitoring-mcp-ingress` obsługuje `/mcp` z przepisaniem ścieżki (`/mcp/health` → `/health`). Prometheus i Alertmanager celowo nie są wystawione (brak uwierzytelniania) – dostęp przez `port-forward`.
-* **Dostęp zewnętrzny / LoadBalancer:** w Minikube adres Ingress Controllera uzyskuje się przez `minikube ip` lub `minikube tunnel` (usługa typu LoadBalancer); w chmurze Ingress Controller dostaje adres od LoadBalancera dostawcy.
+* **Dostęp zewnętrzny / LoadBalancer:** w Minikube kontroler Ingress jest usługą `NodePort` osiągalną pod `minikube ip` (zweryfikowane: kolumna ADDRESS Ingressa to `192.168.49.2`); w klastrze chmurowym ten sam kontroler otrzymuje adres od LoadBalancera dostawcy. Gdy adres Minikube nie jest osiągalny z hosta, służy `minikube tunnel`.
 
 ---
 
@@ -347,7 +347,7 @@ Skrypt automatycznie:
 
 ### Krok 2: Dostęp do usług
 ```bash
-echo "$(minikube ip) inference.local" | sudo tee -a /etc/hosts      # lub: minikube tunnel
+echo "$(minikube ip) inference.local" | sudo tee -a /etc/hosts
 kubectl -n inference-monitoring get secret grafana-secret -o jsonpath='{.data.admin-password}' | base64 -d
 
 # Prometheus, Alertmanager (bez Ingress) oraz lokalne porty do skryptu testowego

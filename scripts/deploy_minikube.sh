@@ -51,7 +51,7 @@ kubectl get pods -n inference-monitoring -o wide
 echo ""
 echo "Dostęp do usług (Ingress, wymaga wpisu w /etc/hosts):"
 echo "  echo \"\$(minikube ip) inference.local\" | sudo tee -a /etc/hosts"
-echo "  (alternatywnie: 'minikube tunnel' w osobnym terminalu dla typu LoadBalancer)"
+echo "  (gdy adres minikube jest nieosiągalny z hosta: 'minikube tunnel' i wpis 127.0.0.1)"
 echo "Grafana:    https://inference.local/grafana/   (login: admin)"
 echo "            Hasło: kubectl -n inference-monitoring get secret grafana-secret -o jsonpath='{.data.admin-password}' | base64 -d"
 echo "Triton:     https://inference.local/v2/health/ready"

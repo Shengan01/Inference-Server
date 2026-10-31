@@ -34,8 +34,8 @@ System po wdrożeniu w klastrze **Kubernetes** (namespace `inference-monitoring`
    * Deklaratywne odwzorowanie 100% stanu klastra w repozytorium Git z funkcją automatycznej synchronizacji (*Auto-Sync*) oraz samoczynnego przywracania stanu pożądanego (*Self-Healing*).
 
 
-7. **Dostęp z zewnątrz (Ingress, TLS, LoadBalancer):**
-   * Ingress NGINX (`ingressClassName: nginx`) wystawia Grafanę (`/grafana`), Triton (`/v2`) i MCP Agenta (`/mcp`) pod hostem `inference.local` z TLS. W Minikube adres zewnętrzny zapewnia `minikube tunnel` (usługa typu LoadBalancer). Prometheus i Alertmanager nie są wystawiane (brak uwierzytelniania) – dostęp przez `port-forward`.
+7. **Dostęp z zewnątrz (Ingress, TLS):**
+   * Ingress NGINX (`ingressClassName: nginx`) wystawia Grafanę (`/grafana`), Triton (`/v2`) i MCP Agenta (`/mcp`) pod hostem `inference.local` z TLS. W Minikube kontroler Ingress jest usługą NodePort dostępną pod adresem `minikube ip`; w klastrze chmurowym kontroler otrzymuje adres od LoadBalancera dostawcy. Prometheus i Alertmanager nie są wystawiane (brak uwierzytelniania) – dostęp przez `port-forward`.
    * Sekrety (hasło Grafany, certyfikat TLS) nie są przechowywane w Git; tworzy je `scripts/bootstrap_secrets.sh`.
 
 8. **Potok CI/CD i profil Prometheus Operator:**
@@ -70,7 +70,7 @@ flowchart TD
         ADMIN["SRE and Operations"]:::client
     end
 
-    LB["LoadBalancer / minikube tunnel<br/>inference.local, TLS"]:::k8s
+    LB["Entry point: minikube IP, NodePort<br/>cloud: LoadBalancer<br/>inference.local, TLS"]:::k8s
     ING["NGINX Ingress Controller"]:::k8s
 
     CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec

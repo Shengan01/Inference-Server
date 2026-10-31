@@ -50,7 +50,7 @@ flowchart TD
         ADMIN["SRE and Operations"]:::client
     end
 
-    LB["LoadBalancer / minikube tunnel<br/>inference.local, TLS"]:::k8s
+    LB["Entry point: minikube IP, NodePort<br/>cloud: LoadBalancer<br/>inference.local, TLS"]:::k8s
     ING["NGINX Ingress Controller"]:::k8s
 
     CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
@@ -151,6 +151,17 @@ flowchart TD
 
 ---
 
+## Documentation
+
+| Document | Content |
+| :--- | :--- |
+| [docs/INSTRUKCJA_URUCHOMIENIA_I_TESTOW.md](docs/INSTRUKCJA_URUCHOMIENIA_I_TESTOW.md) | How to deploy, access, test, run GitOps and the operator profile |
+| [docs/ZADANIE_3_IMPLEMENTACJA_I_SPRAWOZDANIE.md](docs/ZADANIE_3_IMPLEMENTACJA_I_SPRAWOZDANIE.md) | Task 3: implementation description and test report |
+| [docs/ZADANIE_2_OPIS_I_ARCHITEKTURA.md](docs/ZADANIE_2_OPIS_I_ARCHITEKTURA.md) | Task 2: functional description, architecture and test procedure |
+| [docs/DOKUMENTACJA_TECHNICZNA.md](docs/DOKUMENTACJA_TECHNICZNA.md) | Detailed technical documentation |
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -172,7 +183,7 @@ Deploy to Minikube with required addons and health checks:
 Grafana, Triton and the MCP Agent are exposed through the NGINX Ingress (TLS, self-signed certificate):
 ```bash
 echo "$(minikube ip) inference.local" | sudo tee -a /etc/hosts
-# or, for a LoadBalancer address, run in a separate terminal: minikube tunnel
+# On Minikube the ingress controller is a NodePort service reachable at `minikube ip`; in a cloud cluster it receives a LoadBalancer address instead
 kubectl -n inference-monitoring get secret grafana-secret -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
@@ -214,6 +225,8 @@ Latency is computed from Prometheus counters (`nv_inference_request_duration_us 
 │       └── ci-cd.yaml               # CI/CD: lint, kubeconform, Trivy, kind test, ghcr push, GitOps bump
 ├── docs/
 │   ├── DOKUMENTACJA_TECHNICZNA.md   # Technical documentation
+│   ├── INSTRUKCJA_URUCHOMIENIA_I_TESTOW.md # Run and test instructions
+│   ├── ZADANIE_3_IMPLEMENTACJA_I_SPRAWOZDANIE.md # Task 3 report
 │   └── ZADANIE_2_OPIS_I_ARCHITEKTURA.md # Architecture specification report
 ├── k8s/
 │   ├── base/                        # Base Kubernetes resources
