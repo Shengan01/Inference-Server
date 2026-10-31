@@ -2,7 +2,7 @@
 # Script to maintain port-forwards to K8s services in the background
 
 cleanup() {
-    kill $(jobs -p) 2>/dev/null || true
+    jobs -p | xargs -r kill 2>/dev/null || true
     exit 0
 }
 trap cleanup SIGINT SIGTERM EXIT

@@ -20,7 +20,7 @@ minikube addons enable metrics-server || true
 
 # 3. Budowanie obrazu MCP Agenta wewnątrz środowiska Dockera Minikube
 echo "Budowanie obrazu mcp-agent w Minikube..."
-minikube image build -t mcp-agent:local ./mcp_agent || (eval $(minikube docker-env) && docker build -t mcp-agent:local ./mcp_agent)
+minikube image build -t mcp-agent:local ./mcp_agent || (eval "$(minikube docker-env)" && docker build -t mcp-agent:local ./mcp_agent)
 
 # 4. Aplikacja manifestów za pomocą Kustomize
 echo "Wdrażanie manifestów K8s w trybie: ${MODE}..."
