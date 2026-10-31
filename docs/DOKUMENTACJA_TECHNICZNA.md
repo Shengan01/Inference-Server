@@ -64,6 +64,10 @@ flowchart TD
 
     CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
 
+    subgraph Operator ["Namespace: monitoring (optional operator profile, Helm)"]
+        KPS["kube-prometheus-stack<br/>Prometheus Operator, Prometheus,<br/>Alertmanager, Grafana"]:::obs
+    end
+
     subgraph Cluster ["Namespace: inference-monitoring"]
         direction TB
 
@@ -77,6 +81,7 @@ flowchart TD
             RULES["Alerting rules<br/>ConfigMap, 4 alerts"]:::obs
             AM["Alertmanager<br/>Deployment, :9093"]:::obs
             GRAF["Grafana<br/>Deployment, :3000, /grafana"]:::obs
+            SM["ServiceMonitors and PrometheusRule<br/>k8s/addons/operator-stack"]:::obs
             PVC1[("PVC prometheus-storage 2Gi")]:::storage
             PVC2[("PVC grafana-storage 1Gi")]:::storage
         end
@@ -94,6 +99,7 @@ flowchart TD
     GHA -->|bump image tag| GIT
     ARGO -->|poll| GIT
     ARGO -->|apply overlay| Cluster
+    ARGO -->|Helm chart and addon| Operator
     GHCR -.->|image pull| AGENT
 
     USER -->|HTTPS /v2| LB
@@ -113,6 +119,9 @@ flowchart TD
     AGENT -->|PromQL :9090| PROM
     AGENT -->|hot-reload :8000| TRITON
 
+    KPS -.->|discovers| SM
+    KPS -.->|scrape :8002, :5000| TRITON
+    KPS -.->|scrape :5000/metrics/config| AGENT
     CM -.->|provisioning| GRAF
     CM -.->|config seed| AGENT
     SEC -.-> GRAF
@@ -213,7 +222,15 @@ W profilu standardowym reguły są w ConfigMap `k8s/base/prometheus/alerting-rul
 4. **`GPUMemorySaturation`** (`severity: critical`): Wyzwalany, gdy zużycie pamięci GPU przekracza 85% (ochrona przed błędem OOM).
 
 ### 5.3. Profil Prometheus Operator (opcjonalny, Helm)
-Katalog `k8s/addons/operator-stack` zawiera zasoby dla chartu `kube-prometheus-stack`: `ServiceMonitor` dla `triton` i `mcp-agent-config`, `PrometheusRule`, `NetworkPolicy` zezwalającą na scrape z namespace `monitoring` oraz `helm-values.yaml`. Wdraża go druga aplikacja ArgoCD (`k8s/gitops/argocd-application-operator.yaml`, chart `kube-prometheus-stack` 58.2.2 + zasoby z Git). Ten profil jest uzupełnieniem, nie zastępuje profilu standardowego; własny dashboard jest dostarczany przez profil standardowy.
+Katalog `k8s/addons/operator-stack` zawiera zasoby dla chartu `kube-prometheus-stack`: `ServiceMonitor` dla `triton` i `mcp-agent-config`, `PrometheusRule`, `NetworkPolicy` zezwalającą na scrape z namespace `monitoring` oraz `helm-values.yaml`. Wdraża go druga aplikacja ArgoCD (`k8s/gitops/argocd-application-operator.yaml`, chart `kube-prometheus-stack` 58.2.2 + zasoby z Git). Ten profil jest uzupełnieniem, nie zastępuje profilu standardowego; własny dashboard jest dostarczany przez profil standardowy (Grafana z chartu ma tylko domyślne dashboardy Kubernetes).
+
+**Wdrożenie i weryfikacja (Minikube + ArgoCD):**
+```bash
+OPERATOR_PROFILE=true ./scripts/bootstrap_secrets.sh      # sekret grafana-admin w namespace monitoring
+kubectl apply -f k8s/gitops/argocd-application-operator.yaml
+kubectl -n monitoring port-forward svc/kps-prometheus 19090:9090
+```
+Po synchronizacji obu aplikacji (`kube-prometheus-stack`, `operator-stack-resources`) Prometheus z chartu (`prometheus-kps-prometheus-0`) raportuje cele `serviceMonitor/inference-monitoring/triton/0` i `serviceMonitor/inference-monitoring/mcp-agent-config/0` w stanie `up`, grupa reguł `inference_alerts` zawiera 4 alerty, a Alertmanager z chartu jest podłączony. Sprawdzono na klastrze Minikube.
 
 ### 5.4. Dashboard Grafana
 Dedykowany dashboard *Autonomous Inference Cluster* (`grafana/dashboards/inference-cluster.json`) zawiera panele:
@@ -227,7 +244,7 @@ Dedykowany dashboard *Autonomous Inference Cluster* (`grafana/dashboards/inferen
 
 ## 6. Zarządzanie Cyklem Życia z GitOps (ArgoCD) – Zadanie 4
 
-Zarządzanie wdrożeniem (Zadanie cząstkowe 4) oparte jest na paradygmacie **GitOps**. Przed pierwszą synchronizacją należy jednorazowo wykonać `./scripts/bootstrap_secrets.sh` na docelowym klastrze (sekrety nie są w Git):
+Zarządzanie wdrożeniem (Zadanie cząstkowe 4) oparte jest na paradygmacie **GitOps** (ArgoCD zainstalowany w namespace `argocd`; zweryfikowane na klastrze Minikube: synchronizacja `Synced/Healthy`, obraz `mcp-agent` pobrany z `ghcr.io`, self-heal po ręcznym usunięciu Service i wyzerowaniu replik Grafany). Przed pierwszą synchronizacją należy jednorazowo wykonać `./scripts/bootstrap_secrets.sh` na docelowym klastrze (sekrety nie są w Git):
 
 ```mermaid
 sequenceDiagram
@@ -250,29 +267,15 @@ sequenceDiagram
     Note over ArgoCD,Cluster: W przypadku ręcznej modyfikacji: Self-Healing przywraca stan z Gita!
 ```
 
-### Manifest ArgoCD (`k8s/gitops/argocd-application.yaml`):
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: inference-monitoring-app
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: 'https://github.com/Shengan01/Inference-Server.git'
-    targetRevision: main
-    path: k8s/overlays/cpu-demo
-  destination:
-    server: 'https://kubernetes.default.svc'
-    namespace: inference-monitoring
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
+### Aplikacje ArgoCD (`k8s/gitops/`):
+| Aplikacja | Źródło | Cel |
+| :--- | :--- | :--- |
+| `inference-monitoring-app` (`argocd-application.yaml`) | repo Git, `k8s/overlays/cpu-demo`, gałąź `main` | namespace `inference-monitoring` |
+| `kube-prometheus-stack` (`argocd-application-operator.yaml`) | chart Helm 58.2.2 + `k8s/addons/operator-stack/helm-values.yaml` z repo | namespace `monitoring` |
+| `operator-stack-resources` (`argocd-application-operator.yaml`) | repo Git, `k8s/addons/operator-stack` | namespace `inference-monitoring` |
+
+Wszystkie mają `syncPolicy.automated` z `prune: true` i `selfHeal: true`; aplikacja rdzenia dodatkowo ma `retry` z wykładniczym backoffem. Sekrety (`grafana-secret`, `inference-tls`, a dla profilu operatora `grafana-admin`) nie są w Git i tworzy je `scripts/bootstrap_secrets.sh` przed pierwszą synchronizacją. Pakiet `ghcr.io/shengan01/mcp-agent` jest publiczny, więc klaster pobiera obraz bez `imagePullSecret`.
+
 * **Single Source of Truth:** Stan klastra jest w 100% zdefiniowany w repozytorium Git w katalogu `k8s/overlays/`.
 * **Self-Healing:** Próba manualnego usunięcia lub zmiany zasobu (np. `kubectl delete svc ...`) skutkuje natychmiastowym przywróceniem go przez ArgoCD.
 * **Automated Prune:** Usunięcie manifestu z Gita usuwa odpowiadający mu obiekt z klastra.

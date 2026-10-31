@@ -33,6 +33,14 @@ System po wdrożeniu w klastrze **Kubernetes** (namespace `inference-monitoring`
 6. **Zarządzanie cyklem życia aplikacji według paradygmatu GitOps (ArgoCD):**
    * Deklaratywne odwzorowanie 100% stanu klastra w repozytorium Git z funkcją automatycznej synchronizacji (*Auto-Sync*) oraz samoczynnego przywracania stanu pożądanego (*Self-Healing*).
 
+
+7. **Dostęp z zewnątrz (Ingress, TLS, LoadBalancer):**
+   * Ingress NGINX (`ingressClassName: nginx`) wystawia Grafanę (`/grafana`), Triton (`/v2`) i MCP Agenta (`/mcp`) pod hostem `inference.local` z TLS. W Minikube adres zewnętrzny zapewnia `minikube tunnel` (usługa typu LoadBalancer). Prometheus i Alertmanager nie są wystawiane (brak uwierzytelniania) – dostęp przez `port-forward`.
+   * Sekrety (hasło Grafany, certyfikat TLS) nie są przechowywane w Git; tworzy je `scripts/bootstrap_secrets.sh`.
+
+8. **Potok CI/CD i profil Prometheus Operator:**
+   * GitHub Actions: lint i walidacja wszystkich overlayów (`kubeconform`), skan Trivy (IaC i obraz), test całej procedury na klastrze `kind`, wypchnięcie obrazu do `ghcr.io` i automatyczne podbicie jego tagu w Git, które uruchamia wdrożenie przez ArgoCD.
+   * Opcjonalny profil z `ServiceMonitor`, `PrometheusRule` i chartem Helm `kube-prometheus-stack` (`k8s/addons/operator-stack`), wdrażany osobnymi aplikacjami ArgoCD.
 ---
 
 ## 2. Architektura Systemu (Forma Graficzna)
@@ -67,6 +75,10 @@ flowchart TD
 
     CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
 
+    subgraph Operator ["Namespace: monitoring (optional operator profile, Helm)"]
+        KPS["kube-prometheus-stack<br/>Prometheus Operator, Prometheus,<br/>Alertmanager, Grafana"]:::obs
+    end
+
     subgraph Cluster ["Namespace: inference-monitoring"]
         direction TB
 
@@ -80,6 +92,7 @@ flowchart TD
             RULES["Alerting rules<br/>ConfigMap, 4 alerts"]:::obs
             AM["Alertmanager<br/>Deployment, :9093"]:::obs
             GRAF["Grafana<br/>Deployment, :3000, /grafana"]:::obs
+            SM["ServiceMonitors and PrometheusRule<br/>k8s/addons/operator-stack"]:::obs
             PVC1[("PVC prometheus-storage 2Gi")]:::storage
             PVC2[("PVC grafana-storage 1Gi")]:::storage
         end
@@ -97,6 +110,7 @@ flowchart TD
     GHA -->|bump image tag| GIT
     ARGO -->|poll| GIT
     ARGO -->|apply overlay| Cluster
+    ARGO -->|Helm chart and addon| Operator
     GHCR -.->|image pull| AGENT
 
     USER -->|HTTPS /v2| LB
@@ -116,6 +130,9 @@ flowchart TD
     AGENT -->|PromQL :9090| PROM
     AGENT -->|hot-reload :8000| TRITON
 
+    KPS -.->|discovers| SM
+    KPS -.->|scrape :8002, :5000| TRITON
+    KPS -.->|scrape :5000/metrics/config| AGENT
     CM -.->|provisioning| GRAF
     CM -.->|config seed| AGENT
     SEC -.-> GRAF
@@ -152,3 +169,15 @@ Procedura testowa pozwala na obiektywną, powtarzalną i weryfikowalną ocenę o
   1. Kontroler dokonuje bezprzerwowej rekonfiguracji Tritona (*zero-downtime hot reload* – 100% zapytań zwraca kod 200).
   2. Metryka `triton_config_max_num_seqs` w Prometheusie aktualizuje się do wartości `512`.
   3. Średnie opóźnienie serwera spada o ponad 50% względem fazy burzy (powrót poniżej 30 ms), a alert `HighInferenceLatency` samoczynnie powraca do stanu `RESOLVED`.
+
+### Test 6: GitOps – synchronizacja i self-heal (ArgoCD)
+* **Procedura:** `kubectl apply -f k8s/gitops/argocd-application.yaml`, odczekanie na synchronizację (`kubectl -n argocd get app inference-monitoring-app`), a następnie ręczne usunięcie `alertmanager-service` i wyzerowanie replik Grafany (`kubectl scale deploy/grafana --replicas=0`).
+* **Kryterium sukcesu (PASS):** aplikacja osiąga stan `Synced/Healthy`, pod `mcp-agent` używa obrazu z `ghcr.io`, a obie ręczne zmiany są cofane przez ArgoCD w ciągu kilkudziesięciu sekund.
+
+### Test 7: Profil Prometheus Operator (ServiceMonitor, Helm)
+* **Procedura:** `OPERATOR_PROFILE=true ./scripts/bootstrap_secrets.sh`, `kubectl apply -f k8s/gitops/argocd-application-operator.yaml`, następnie odpytanie `http://localhost:19090/api/v1/targets` i `/api/v1/rules` po `kubectl -n monitoring port-forward svc/kps-prometheus 19090:9090`.
+* **Kryterium sukcesu (PASS):** cele `serviceMonitor/inference-monitoring/triton/0` i `serviceMonitor/inference-monitoring/mcp-agent-config/0` mają stan `up`, grupa `inference_alerts` zawiera 4 reguły, Alertmanager z chartu jest aktywny.
+
+### Test 8: Potok CI/CD (GitHub Actions)
+* **Procedura:** push na gałąź `main`.
+* **Kryterium sukcesu (PASS):** wszystkie 5 jobów kończy się sukcesem (lint i walidacja overlayów, Trivy IaC, test w klastrze `kind` z kryteriami z Testów 4–5, zbudowanie i skan obrazu z wypchnięciem do `ghcr.io`, automatyczne podbicie tagu obrazu w Git).

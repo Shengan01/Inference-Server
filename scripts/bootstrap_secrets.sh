@@ -2,6 +2,8 @@
 # Creates the secrets that are intentionally NOT stored in Git:
 #   - grafana-secret : Grafana admin credentials (random password)
 #   - inference-tls  : self-signed certificate for the Ingress host
+#   - grafana-admin  : (only with OPERATOR_PROFILE=true) credentials for the
+#                      kube-prometheus-stack Grafana, namespace "monitoring"
 # Idempotent: existing secrets are left untouched.
 set -euo pipefail
 
@@ -32,4 +34,17 @@ else
     kubectl -n "$NAMESPACE" create secret tls inference-tls \
         --cert="$TMP/tls.crt" --key="$TMP/tls.key"
     echo "inference-tls created (self-signed for $HOST)"
+fi
+
+if [ "${OPERATOR_PROFILE:-false}" = "true" ]; then
+    kubectl get namespace monitoring >/dev/null 2>&1 || kubectl create namespace monitoring
+    if kubectl -n monitoring get secret grafana-admin >/dev/null 2>&1; then
+        echo "grafana-admin already exists - skipping"
+    else
+        PASSWORD="$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-20)"
+        kubectl -n monitoring create secret generic grafana-admin \
+            --from-literal=admin-user=admin \
+            --from-literal=admin-password="$PASSWORD"
+        echo "grafana-admin created in namespace monitoring"
+    fi
 fi

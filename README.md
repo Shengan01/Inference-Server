@@ -55,6 +55,10 @@ flowchart TD
 
     CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
 
+    subgraph Operator ["Namespace: monitoring (optional operator profile, Helm)"]
+        KPS["kube-prometheus-stack<br/>Prometheus Operator, Prometheus,<br/>Alertmanager, Grafana"]:::obs
+    end
+
     subgraph Cluster ["Namespace: inference-monitoring"]
         direction TB
 
@@ -68,6 +72,7 @@ flowchart TD
             RULES["Alerting rules<br/>ConfigMap, 4 alerts"]:::obs
             AM["Alertmanager<br/>Deployment, :9093"]:::obs
             GRAF["Grafana<br/>Deployment, :3000, /grafana"]:::obs
+            SM["ServiceMonitors and PrometheusRule<br/>k8s/addons/operator-stack"]:::obs
             PVC1[("PVC prometheus-storage 2Gi")]:::storage
             PVC2[("PVC grafana-storage 1Gi")]:::storage
         end
@@ -85,6 +90,7 @@ flowchart TD
     GHA -->|bump image tag| GIT
     ARGO -->|poll| GIT
     ARGO -->|apply overlay| Cluster
+    ARGO -->|Helm chart and addon| Operator
     GHCR -.->|image pull| AGENT
 
     USER -->|HTTPS /v2| LB
@@ -104,6 +110,9 @@ flowchart TD
     AGENT -->|PromQL :9090| PROM
     AGENT -->|hot-reload :8000| TRITON
 
+    KPS -.->|discovers| SM
+    KPS -.->|scrape :8002, :5000| TRITON
+    KPS -.->|scrape :5000/metrics/config| AGENT
     CM -.->|provisioning| GRAF
     CM -.->|config seed| AGENT
     SEC -.-> GRAF
@@ -120,7 +129,7 @@ flowchart TD
 * **Zero-Downtime Hot-Reload:** Uses an `initContainer` pattern to initialize a writable configuration volume seeded from a `ConfigMap`.
 * **Automated Provisioning:** Datasources and dashboard configurations are loaded automatically when Grafana starts. Grafana state lives on its own PVC and is served under `/grafana` behind the Ingress.
 * **Alertmanager:** Prometheus forwards firing alerts to an Alertmanager Deployment (no external receiver configured by default).
-* **Operator profile (optional):** `k8s/addons/operator-stack` provides `ServiceMonitor` and `PrometheusRule` resources plus Helm values for `kube-prometheus-stack`, deployed by a second ArgoCD Application.
+* **Operator profile (optional):** `k8s/addons/operator-stack` provides `ServiceMonitor` and `PrometheusRule` resources plus Helm values for `kube-prometheus-stack` (chart 58.2.2), deployed by two further ArgoCD Applications (`k8s/gitops/argocd-application-operator.yaml`). Verified on Minikube: both ServiceMonitor targets are `up` and the four alert rules are loaded.
 
 ### 2. Security Hardening and DevSecOps
 * **Pod Security Standards:** Workloads run with `runAsNonRoot: true`, non-zero UIDs (472, 10001, 65534), `allowPrivilegeEscalation: false`, and `capabilities: drop: ["ALL"]`.
@@ -137,7 +146,8 @@ flowchart TD
 * Declarative application configuration managed by ArgoCD (`k8s/gitops/argocd-application.yaml`).
 * Continuous reconciliation between repository state and cluster resources (automated sync, prune, self-heal).
 * The `gitops-bump` CI job commits the new `mcp-agent` image tag (`ghcr.io/shengan01/mcp-agent`) to the overlays, which is what triggers the rollout. The package must be public (or an image pull secret configured) for the cluster to pull it.
-* Secrets must exist before the first sync: run `./scripts/bootstrap_secrets.sh` once against the target cluster.
+* Secrets must exist before the first sync: run `./scripts/bootstrap_secrets.sh` once against the target cluster (`OPERATOR_PROFILE=true` also creates the `grafana-admin` secret for the operator profile).
+* Verified on Minikube: the Application reaches `Synced/Healthy`, pulls the `ghcr.io` image, and self-heal restores a deleted Service and scaled-down Deployment.
 
 ---
 
