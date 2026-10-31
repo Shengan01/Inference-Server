@@ -24,6 +24,10 @@ TRITON_URL = os.getenv("TRITON_URL", "http://localhost:8000")
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
 MCP_AGENT_URL = os.getenv("MCP_AGENT_URL", "http://localhost:5000")
 MODEL_NAME = "finance-qwen"
+# Size of the per-second burst in the storm / resolution phases. It has to
+# comfortably exceed the mock's default batch capacity (max_num_seqs=32) even
+# when the load generator cannot fire every request at the same instant.
+STORM_RPS = int(os.getenv("STORM_RPS", "300"))
 
 @dataclass
 class PhaseResult:
@@ -202,14 +206,14 @@ async def main():
     results.append(res1)
 
     # Faza 2: Skok obciazenia (The Storm)
-    res2 = await run_traffic_phase("2. THE STORM (Skok obciazenia - degradacja latencji)", target_rps=150, duration_s=15)
+    res2 = await run_traffic_phase("2. THE STORM (Skok obciazenia - degradacja latencji)", target_rps=STORM_RPS, duration_s=15)
     snap2 = await triton_counters()
     res2.server_avg_latency_ms = server_avg_ms(snap1, snap2)
     results.append(res2)
 
     # Faza 3: Interwencja Agenta SRE (The Resolution)
     reconfigured = await trigger_reconfiguration("aggressive")
-    res3 = await run_traffic_phase("3. THE RESOLUTION (Po rekonfiguracji klastra)", target_rps=150, duration_s=15)
+    res3 = await run_traffic_phase("3. THE RESOLUTION (Po rekonfiguracji klastra)", target_rps=STORM_RPS, duration_s=15)
     snap3 = await triton_counters()
     res3.server_avg_latency_ms = server_avg_ms(snap2, snap3)
     results.append(res3)
