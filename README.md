@@ -184,13 +184,15 @@ Run the automated RBAC, network policy, and container permission check:
 ```
 
 ### 4. Load and Reconfiguration Testing
-Execute the test procedure (needs the port-forwards above). It exits non-zero when a check fails and writes `test-report.json`; the same procedure runs in CI on `kind` and uploads the report as a build artifact:
+The test procedure runs as a Job inside the cluster (so results are not distorted by `port-forward`), exits non-zero when a check fails, and writes `test-output.log` and `test-report.json`. The same procedure runs in CI on `kind` and uploads the report as a build artifact:
 ```bash
-python3 scripts/test_k8s_simulation.py
+LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh
 ```
-* **Phase 1: Baseline (20 RPS):** Normal load, low latency.
-* **Phase 2: Load Spike (150 RPS):** Latency degrades, triggering Prometheus warning alerts.
-* **Phase 3: Reconfiguration:** MCP Agent applies optimized batch settings (`max_num_seqs: 512`), restoring response latency.
+* **Phase 1: Baseline (20 RPS):** normal load, low server-side latency.
+* **Phase 2: Load Spike (400 concurrent requests per second):** in-flight requests exceed `max_num_seqs`, server-side latency rises and `HighInferenceQueueDepth` fires.
+* **Phase 3: Reconfiguration:** the MCP Agent applies `max_num_seqs: 512` (hot reload) and server-side latency returns to the baseline.
+
+Latency is computed from Prometheus counters (`nv_inference_request_duration_us / nv_inference_request_success`); client-side latency is reported only as a secondary figure.
 
 ---
 
@@ -219,6 +221,7 @@ python3 scripts/test_k8s_simulation.py
 │   │   ├── cpu-demo/                # Lightweight CPU demonstration overlay (registry image)
 │   │   ├── gpu/                     # GPU production overlay (registry image)
 │   │   └── local-cpu, local-gpu/    # Same, using the locally built mcp-agent image
+│   ├── tests/                       # In-cluster load generator Job and test-only NetworkPolicies
 │   ├── addons/
 │   │   └── operator-stack/          # ServiceMonitors, PrometheusRule, Helm values (kube-prometheus-stack)
 │   └── gitops/
@@ -228,7 +231,8 @@ python3 scripts/test_k8s_simulation.py
 │   ├── deploy_minikube.sh           # Deployment automation script
 │   ├── bootstrap_secrets.sh         # Creates Grafana and TLS secrets (not stored in Git)
 │   ├── mock_triton_server.py        # Lightweight mock Triton server
-│   ├── test_k8s_simulation.py       # Load testing and verification script
+│   ├── test_k8s_simulation.py       # Load testing and verification script (runs in-cluster)
+│   ├── run_in_cluster_test.sh       # Runs the test as a Job and extracts the report
 │   ├── verify_security.sh           # Security audit script
 │   └── start_port_forward.sh        # Port forwarding helper
 ├── mcp_agent/                       # Agent source code (FastMCP + Prometheus API)

@@ -282,26 +282,29 @@ spec:
 ## 7. Procedura Testowa i Sprawozdanie z Testów
 
 ### 7.1. Opis Procedury Testowej (`scripts/test_k8s_simulation.py`)
-Procedura weryfikuje odporność systemu w trzech kluczowych aktach:
-1. **Akt 1: THE CALM (Ruch bazowy - 20 RPS):**
-   * Stan klastra stabilny, średnie opóźnienie < 20 ms.
-   * Reguły alertów w stanie `OK`.
-2. **Akt 2: THE STORM (Skok obciążenia - 150 RPS):**
-   * Gwałtowny wzrost ruchu generuje nasycenie kolejki w podzie Tritona.
-   * Średnie opóźnienie wzrasta do > 70 ms.
-   * Prometheus rejestruje anomalie, wyzwalany jest alert `HighInferenceLatency`.
-3. **Akt 3: THE RESOLUTION (Interwencja SRE i Hot-Reload):**
-   * Kontroler SRE (`mcp-agent`) wykrywa przekroczenie progów i wywołuje endpoint rekonfiguracji ze strategią `aggressive` (zwiększenie `max_num_seqs` do 512).
-   * Triton dokonuje bezprzerwowej aktualizacji (hot-reload).
-   * Następuje spadek opóźnień do poziomu akceptowalnego (< 30 ms) pomimo utrzymującego się obciążenia 150 RPS.
+Procedura działa **wewnątrz klastra** jako `Job` (`k8s/tests/loadgen-job.yaml`, uruchamiany przez `scripts/run_in_cluster_test.sh`), dzięki czemu wyniki nie są zniekształcone przez `kubectl port-forward`. Job ma własne `NetworkPolicy` (`k8s/tests/loadgen-networkpolicy.yaml`) zezwalające tylko na ruch do Tritona, MCP Agenta i Prometheusa. Obciążenie to serie równoczesnych żądań raz na sekundę (rozmiar serii = docelowy RPS), bo to liczba żądań będących jednocześnie w obsłudze jest porównywana z pojemnością batcha (`max_num_seqs`, domyślnie 32).
+1. **Akt 1: THE CALM (20 RPS, 10 s):** stan stabilny, brak degradacji.
+2. **Akt 2: THE STORM (400 RPS, 15 s; `STORM_RPS`):** liczba równoległych żądań przekracza `max_num_seqs`, rośnie opóźnienie po stronie serwera i głębokość kolejki; Prometheus uruchamia alert `HighInferenceQueueDepth`.
+3. **Akt 3: THE RESOLUTION:** kontroler SRE (`mcp-agent`) wywołuje `/reconfigure` ze strategią `aggressive` (`max_num_seqs` = 512, hot-reload), po czym ten sam ruch jest obsługiwany bez degradacji.
+
+Opóźnienie serwera jest liczone z liczników Prometheusa (`Δ nv_inference_request_duration_us / Δ nv_inference_request_success`), czyli tak samo jak w regule alertu. Opóźnienie mierzone przez klienta jest raportowane pomocniczo.
+
+**Kryteria PASS** (skrypt kończy się kodem != 0, gdy któreś nie jest spełnione): skuteczność żądań ≥ 95% w fazach 1 i 3; `/reconfigure` zwraca 200; wszystkie cele Prometheusa `up` i reguły alertów załadowane; opóźnienie serwera w fazie 2 > 2× bazowe i > 25 ms; w fazie 3 < 30 ms oraz < 50% wartości z fazy 2.
 
 ### 7.2. Raport Wyników z Realizacji Testu
-Skrypt kończy się kodem != 0, jeśli nie są spełnione kryteria PASS: (1) skuteczność żądań w fazie bazowej ≥ 95%, (2) endpoint `/reconfigure` zwraca 200, (3) skuteczność po rekonfiguracji ≥ 95%, (4) wszystkie cele Prometheusa są `up` i reguły alertów są załadowane. Wyniki zapisuje do `test-report.json`.
+Wyniki z przebiegu CI (job `integration-test`, klaster `kind` na runnerze GitHub Actions, run [41239646305](https://github.com/Shengan01/Inference-Server/actions/runs/41239646305), commit `7fee486`; artefakt `test-report`). Każdy kolejny build publikuje nowy raport; wynik `FAIL` któregokolwiek kryterium przerywa pipeline.
 
-Poniżej wyniki z przebiegu CI (job `integration-test`, klaster `kind` na runnerze GitHub Actions, run [41237028308](https://github.com/Shengan01/Inference-Server/actions/runs/41237028308), commit `eaca180`; artefakt `test-report`). Każdy kolejny build publikuje nowy raport.
-
-| Faza Testowa | Ruch (RPS) | Wysłane Żądania | Pomyślne (%) | Śr. Latencja (ms) | P95 Latencja (ms) |
+| Faza Testowa | Ruch (żądań/s) | Wysłane Żądania | Pomyślne (%) | Śr. latencja serwera (ms) | Śr. latencja klienta (ms) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
+| **1. THE CALM** | 20 | 200 | 100% | **15.8** | 38.2 |
+| **2. THE STORM** | 400 | 3600 | 100% | **65.2** | 1474.0 |
+| **3. THE RESOLUTION** | 400 | 3600 | 100% | **13.4** | 1439.8 |
+
+Wszystkie 7 kryteriów PASS. W trakcie testu aktywny był alert `HighInferenceQueueDepth`.
+
+**Jak czytać wyniki:** latencja serwera (z Prometheusa) pokazuje efekt, który ma pokazywać test: wzrost ponad 4× w burzy (15.8 → 65.2 ms) i powrót do poziomu bazowego po hot-reload (13.4 ms). Latencja klienta jest w fazach 2 i 3 podobna (~1,4 s), bo przy 400 równoczesnych żądaniach dominuje czas, w którym pojedynczy proces generatora (2 vCPU runnera) fizycznie wysyła i odbiera serię; nie należy jej interpretować jako opóźnienia usługi. Wartości bezwzględne zależą od mocy maszyny i modelu opóźnień mocka Tritona (profil `cpu-demo`); na GPU wartości będą inne. Wcześniejsze liczby w tej sekcji (18 / 85 / 27 ms) nie pochodziły z uruchomienia i zostały usunięte.
+
+--- | :---: | :---: | :---: | :---: | :---: |
 | **1. THE CALM** | 20 | 40 | 100% | 1024.3 | 1027.6 |
 | **2. THE STORM** | 150 | 210 | 97.6% | 1472.5 | 2308.9 |
 | **3. THE RESOLUTION** | 150 | 240 | 98.3% | 1513.9 | 2116.9 |
@@ -362,8 +365,8 @@ Skrypt weryfikuje:
 * Czy polityki `NetworkPolicy` oraz `ResourceQuota` są aktywne.
 
 ### Krok 4: Wykonanie Procedury Testowej pod Obciążeniem
-W osobnym terminalu uruchom symulację testową:
+Test działa jako Job wewnątrz klastra (wyniki: `test-output.log`, `test-report.json`):
 ```bash
-python3 scripts/test_k8s_simulation.py
+LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh
 ```
 Obserwuj na żywo w Grafanie pod adresem `https://inference.local/grafana/` wykresy opóźnień, kolejki i dynamicznej zmiany konfiguracji!

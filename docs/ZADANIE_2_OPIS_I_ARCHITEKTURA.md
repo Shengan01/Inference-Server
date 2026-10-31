@@ -143,12 +143,12 @@ Procedura testowa pozwala na obiektywną, powtarzalną i weryfikowalną ocenę o
 * **Kryterium sukcesu (PASS):** Cele scrapowania (`triton` na porcie 8002 oraz `mcp_agent_config` na porcie 5000) raportują stan `HEALTHY (up=1)`. Dashboard *Autonomous Inference Cluster* w Grafanie automatycznie wyświetla spójne serie czasowe (latencja, pamięć GPU, wielkość batcha) bez konieczności manualnej konfiguracji.
 
 ### Test 4: Reakcja systemu na syntetyczny skok obciążenia i wyzwolenie alertu (Load & Alert Triggering)
-* **Procedura:** Uruchomienie skryptu symulacyjnego `python3 scripts/test_k8s_simulation.py` generującego gwałtowny skok ruchu z 20 RPS do 150 RPS przez 15 sekund przy bazowej konfiguracji silnika inferencyjnego.
-* **Kryterium sukcesu (PASS):** Prometheus rejestruje natychmiastowy wzrost opóźnień P95 > 50 ms oraz wzrost kolejki zapytań. W czasie $\le 15$ sekund reguła alertu `HighInferenceLatency` przechodzi ze stanu `OK` w stan aktywny `FIRING`, co jest widoczne w Prometheusie (`/api/v1/alerts`) i w Alertmanagerze.
+* **Procedura:** Uruchomienie procedury testowej wewnątrz klastra (`./scripts/run_in_cluster_test.sh`, Job z `scripts/test_k8s_simulation.py`) generującej skok ruchu z 20 RPS do serii 400 równoczesnych żądań na sekundę przez 15 sekund przy bazowej konfiguracji silnika inferencyjnego (`max_num_seqs` = 32).
+* **Kryterium sukcesu (PASS):** Prometheus rejestruje wzrost średniego opóźnienia po stronie serwera (> 2× wartość bazowa i > 25 ms) oraz wzrost kolejki zapytań. W czasie $\le 15$ sekund reguła alertu `HighInferenceLatency` przechodzi ze stanu `OK` w stan aktywny `FIRING`, co jest widoczne w Prometheusie (`/api/v1/alerts`) i w Alertmanagerze.
 
 ### Test 5: Weryfikacja dynamicznej adaptacji SRE i powrotu do SLA (Hot-Reload & Latency Recovery)
 * **Procedura:** Wywołanie procedury optymalizacyjnej przez kontroler SRE (`POST /reconfigure` ze strategią `aggressive` – zwiększenie parametru `max_num_seqs` z 32 do 512) w trakcie trwającego obciążenia 150 RPS.
 * **Kryterium sukcesu (PASS):**
   1. Kontroler dokonuje bezprzerwowej rekonfiguracji Tritona (*zero-downtime hot reload* – 100% zapytań zwraca kod 200).
   2. Metryka `triton_config_max_num_seqs` w Prometheusie aktualizuje się do wartości `512`.
-  3. Średnie opóźnienie żądań spada o ponad 50% (powrót poniżej 30 ms), a alert `HighInferenceLatency` samoczynnie powraca do stanu `RESOLVED`.
+  3. Średnie opóźnienie serwera spada o ponad 50% względem fazy burzy (powrót poniżej 30 ms), a alert `HighInferenceLatency` samoczynnie powraca do stanu `RESOLVED`.
