@@ -2,6 +2,8 @@
 
 Instrukcja krok po kroku: jak wdrożyć system na lokalnym klastrze Minikube, jak go przetestować, jak uruchomić wariant GitOps (ArgoCD) oraz profil Prometheus Operator. Wszystkie polecenia wykonuje się z katalogu głównego repozytorium.
 
+> **Status weryfikacji:** wszystkie kroki tej instrukcji zostały wykonane od zera na czystym klastrze Minikube (osobny profil) w dniu 2026-11-01; wynik: wdrożenie, dostęp, audyt, test (dwa kolejne przebiegi), ArgoCD z self-heal, profil operatora i sprzątanie działają zgodnie z opisem.
+
 ## 1. Wymagania
 
 | Narzędzie | Do czego | Sprawdzenie |
@@ -44,9 +46,15 @@ Ingress obsługuje host `inference.local` z TLS (certyfikat self-signed, przegl�
 
 ```bash
 echo "$(minikube ip) inference.local" | sudo tee -a /etc/hosts
-# Minikube (sterownik docker na Linuksie): kontroler Ingress to usługa NodePort dostępna pod `minikube ip`.
+# Minikube (sterownik docker na Linuksie): kontroler Ingress to usługa NodePort dostępna pod adresem z polecenia: minikube ip
 # Gdy adres Minikube jest nieosiągalny z hosta (macOS/Windows), użyj w osobnym terminalu `minikube tunnel`
 # i wpisu 127.0.0.1 w /etc/hosts.
+```
+
+Bez uprawnień `sudo` (lub bez edycji `/etc/hosts`) wystarczy `curl --resolve`, np.:
+
+```bash
+curl -sk --resolve inference.local:443:$(minikube ip) https://inference.local/grafana/api/health
 ```
 
 | Usługa | Adres | Uwagi |
@@ -87,12 +95,7 @@ Fazy: **CALM** (20 żądań/s), **STORM** (seria 400 równoczesnych żądań na 
 
 Po teście możesz obejrzeć wykresy w Grafanie (dashboard *Autonomous Inference Cluster*) i aktywne alerty w Prometheusie (`/alerts`).
 
-Powtarzalność: przed kolejnym uruchomieniem zresetuj stan mocka (wraca do `max_num_seqs` = 32):
-
-```bash
-kubectl -n inference-monitoring rollout restart deploy/triton-server
-kubectl -n inference-monitoring rollout status deploy/triton-server
-```
+Test można uruchamiać wielokrotnie: na początku sam przywraca mock Tritona do stanu bazowego (`max_num_seqs` = 32, endpoint `/_mock/reset`; prawdziwy Triton go nie ma i ignoruje to wywołanie).
 
 ### 4.3. Walidacja manifestów lokalnie (bez klastra)
 
@@ -116,7 +119,7 @@ kubectl apply -f k8s/gitops/argocd-application.yaml
 kubectl -n argocd get app inference-monitoring-app     # oczekiwane: Synced / Healthy
 ```
 
-ArgoCD pobiera overlay `k8s/overlays/cpu-demo` z gałęzi `main` i obraz `ghcr.io/shengan01/mcp-agent` (pakiet jest publiczny).
+ArgoCD pobiera overlay `k8s/overlays/cpu-demo` z gałęzi `main` i obraz `ghcr.io/shengan01/mcp-agent` (pakiet jest publiczny). Jeśli stos był wcześniej wdrożony skryptem `deploy_minikube.sh`, ArgoCD przejmuje istniejące zasoby i podmienia obraz agenta z lokalnego na rejestrowy. Tuż po utworzeniu aplikacji stan `Progressing` trwa zwykle kilkadziesiąt sekund. Uwaga: ArgoCD ma pierwszeństwo przed lokalnymi zmianami (self-heal) – zmiany manifestów trzeba wypchnąć do Git.
 
 Test self-heal:
 
@@ -140,7 +143,7 @@ Weryfikacja:
 
 ```bash
 kubectl -n monitoring port-forward svc/kps-prometheus 19090:9090 &
-curl -s localhost:19090/api/v1/targets | grep -o '"scrapePool":"[^"]*"'   # serviceMonitor/inference-monitoring/triton/0, .../mcp-agent-config/0
+curl -s localhost:19090/api/v1/targets | grep -o '"scrapePool":"serviceMonitor/inference-monitoring[^"]*"' | sort -u   # .../mcp-agent-config/0 i .../triton/0
 curl -s localhost:19090/api/v1/rules | grep -o 'inference_alerts'
 ```
 
@@ -170,7 +173,8 @@ Wynik: zakładka *Actions* w repozytorium. Raport z testu pobierzesz z artefaktu
 ## 8. Sprzątanie
 
 ```bash
-kubectl delete -f k8s/gitops/argocd-application.yaml                 # jeśli używano ArgoCD (usuwa zasoby przez finalizer)
+kubectl delete -f k8s/gitops/argocd-application-operator.yaml        # jeśli używano profilu operatora
+kubectl delete -f k8s/gitops/argocd-application.yaml                 # jeśli używano ArgoCD: usuwa zasoby aplikacji razem z namespace
 kubectl delete -k k8s/overlays/local-cpu                             # wdrożenie bez ArgoCD
 kubectl delete namespace monitoring argocd                           # profil operatora i ArgoCD
 minikube stop                                                        # zatrzymanie klastra, dane zostają
@@ -185,5 +189,5 @@ minikube stop                                                        # zatrzyman
 | `curl: (6) Could not resolve host: inference.local` | brak wpisu w `/etc/hosts` (rozdz. 3) |
 | Pod `mcp-agent` w `ImagePullBackOff` w profilu `cpu-demo` | pakiet `ghcr.io/shengan01/mcp-agent` musi być publiczny; lokalnie użyj overlaya `local-cpu` |
 | Pody `Pending` z powodu quota | `kubectl -n inference-monitoring describe resourcequota` |
-| Test STORM nie pokazuje degradacji | mock jest w stanie po rekonfiguracji (512); zrestartuj `triton-server` (rozdz. 4.2) |
+| Test STORM nie pokazuje degradacji po zmianie manifestów mocka | ConfigMap `mock-triton-script` nie został zastosowany; wykonaj `kubectl apply -k k8s/overlays/local-cpu` i `kubectl -n inference-monitoring rollout restart deploy/triton-server` |
 | Grafana z chartu nie startuje | brak sekretu `grafana-admin`: `OPERATOR_PROFILE=true ./scripts/bootstrap_secrets.sh` |

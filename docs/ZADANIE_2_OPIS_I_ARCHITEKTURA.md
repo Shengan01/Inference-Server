@@ -47,97 +47,129 @@ System po wdrożeniu w klastrze **Kubernetes** (namespace `inference-monitoring`
 
 ### 2.1. Diagram Architektury Przepływu w Klastrze Kubernetes
 
+**Architektura klastra** (Architecture of the cluster):
+
 ```mermaid
-flowchart TD
-    classDef default fill:#1e293b,stroke:#475569,stroke-width:1.5px,color:#ffffff;
+flowchart LR
     classDef client fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#ffffff;
     classDef k8s fill:#0f3b6d,stroke:#38bdf8,stroke-width:2px,color:#ffffff;
     classDef obs fill:#0e462a,stroke:#4ade80,stroke-width:2px,color:#ffffff;
     classDef sec fill:#5c1d24,stroke:#f87171,stroke-width:2px,color:#ffffff;
     classDef storage fill:#522e0a,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
-    classDef cicd fill:#3b1d5c,stroke:#c084fc,stroke-width:2px,color:#ffffff;
 
-    subgraph Delivery ["Delivery: CI/CD and GitOps"]
-        DEV["Developer<br/>git push"]:::client
-        GHA["GitHub Actions<br/>lint, kubeconform, Trivy,<br/>kind integration test"]:::cicd
-        GHCR[("ghcr.io<br/>mcp-agent image")]:::storage
-        GIT["Git repository<br/>k8s/overlays, image tag"]:::cicd
-        ARGO["ArgoCD<br/>auto-sync + self-heal"]:::cicd
-    end
-
-    subgraph External ["Traffic and Management"]
-        USER["Inference clients / test load"]:::client
-        ADMIN["SRE and Operations"]:::client
-    end
-
+    USER["Inference clients<br/>test load"]:::client
+    ADMIN["SRE and Operations"]:::client
     LB["Entry point: minikube IP, NodePort<br/>cloud: LoadBalancer<br/>inference.local, TLS"]:::k8s
     ING["NGINX Ingress Controller"]:::k8s
+
+    subgraph Cluster ["Namespace: inference-monitoring"]
+        direction TB
+        subgraph Workloads ["Inference and control workloads"]
+            direction LR
+            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>mock on cpu-demo"]:::k8s
+            AGENT["MCP Agent and exporter<br/>Deployment, Python :5000"]:::k8s
+        end
+        subgraph Observability ["Observability layer"]
+            direction LR
+            PROM["Prometheus<br/>StatefulSet :9090"]:::obs
+            RULES["Alerting rules<br/>ConfigMap, 4 alerts"]:::obs
+            AM["Alertmanager<br/>Deployment :9093"]:::obs
+            GRAF["Grafana<br/>Deployment :3000 /grafana"]:::obs
+            SM["ServiceMonitors, PrometheusRule<br/>addons/operator-stack"]:::obs
+        end
+        subgraph State ["State and configuration"]
+            direction LR
+            PVC1[("PVC prometheus-storage 2Gi")]:::storage
+            PVC2[("PVC grafana-storage 1Gi")]:::storage
+            CM["ConfigMaps<br/>dashboard, datasource, model config"]:::storage
+            SEC["Secrets created out of band<br/>grafana-secret, inference-tls"]:::storage
+        end
+        subgraph Security ["Security controls"]
+            direction LR
+            NP["NetworkPolicies<br/>default-deny + allow rules"]:::sec
+            QUOTA["ResourceQuota, LimitRange<br/>4 CPU, 8Gi RAM"]:::sec
+        end
+    end
 
     CR["ClusterRole prometheus-reader-role<br/>cluster-scoped, read-only"]:::sec
 
     subgraph Operator ["Namespace: monitoring (optional operator profile, Helm)"]
-        KPS["kube-prometheus-stack<br/>Prometheus Operator, Prometheus,<br/>Alertmanager, Grafana"]:::obs
+        KPS["kube-prometheus-stack<br/>Operator, Prometheus,<br/>Alertmanager, Grafana"]:::obs
     end
-
-    subgraph Cluster ["Namespace: inference-monitoring"]
-        direction TB
-
-        subgraph SecurityControls ["Security Controls"]
-            NP["NetworkPolicies<br/>default-deny + allow rules"]:::sec
-            QUOTA["ResourceQuota and LimitRange<br/>CPU 4 cores, RAM 8Gi"]:::sec
-        end
-
-        subgraph ObservabilityLayer ["Observability Layer"]
-            PROM["Prometheus<br/>StatefulSet, :9090"]:::obs
-            RULES["Alerting rules<br/>ConfigMap, 4 alerts"]:::obs
-            AM["Alertmanager<br/>Deployment, :9093"]:::obs
-            GRAF["Grafana<br/>Deployment, :3000, /grafana"]:::obs
-            SM["ServiceMonitors and PrometheusRule<br/>k8s/addons/operator-stack"]:::obs
-            PVC1[("PVC prometheus-storage 2Gi")]:::storage
-            PVC2[("PVC grafana-storage 1Gi")]:::storage
-        end
-
-        subgraph CoreWorkloads ["Inference and Control Workloads"]
-            TRITON["Triton Inference Server<br/>Deployment, :8000 / :8002<br/>mock on cpu-demo"]:::k8s
-            AGENT["MCP Agent and custom exporter<br/>Deployment, Python, :5000"]:::k8s
-            CM["ConfigMaps<br/>dashboards, datasource, model config"]:::storage
-            SEC["Secrets, created out of band<br/>grafana-secret, inference-tls"]:::storage
-        end
-    end
-
-    DEV --> GHA
-    GHA -->|push image| GHCR
-    GHA -->|bump image tag| GIT
-    ARGO -->|poll| GIT
-    ARGO -->|apply overlay| Cluster
-    ARGO -->|Helm chart and addon| Operator
-    GHCR -.->|image pull| AGENT
 
     USER -->|HTTPS /v2| LB
     ADMIN -->|HTTPS /grafana, /mcp| LB
     LB --> ING
-    ING -->|/grafana| GRAF
     ING -->|/v2| TRITON
     ING -->|/mcp| AGENT
+    ING -->|/grafana| GRAF
 
-    PROM -->|scrape :8002/metrics| TRITON
+    PROM -->|scrape :8002| TRITON
     PROM -->|scrape :5000/metrics/config| AGENT
-    PROM -->|TSDB| PVC1
     PROM -.->|evaluate| RULES
     PROM -->|firing alerts| AM
-    GRAF -->|PromQL :9090| PROM
-    GRAF --> PVC2
-    AGENT -->|PromQL :9090| PROM
+    GRAF -->|PromQL| PROM
+    AGENT -->|PromQL| PROM
     AGENT -->|hot-reload :8000| TRITON
 
-    KPS -.->|discovers| SM
-    KPS -.->|scrape :8002, :5000| TRITON
-    KPS -.->|scrape :5000/metrics/config| AGENT
-    CM -.->|provisioning| GRAF
-    CM -.->|config seed| AGENT
+    PROM --> PVC1
+    GRAF --> PVC2
+    CM -.-> GRAF
+    CM -.-> AGENT
     SEC -.-> GRAF
     SEC -.-> ING
     CR -.->|bound to prometheus-sa| PROM
+    KPS -.->|discovers| SM
+    KPS -.->|scrape| TRITON
+    KPS -.->|scrape| AGENT
+
+    style Cluster fill:#eef2f7,stroke:#475569,stroke-width:2px,color:#111111
+    style Workloads fill:#e0f2fe,stroke:#38bdf8,color:#111111
+    style Observability fill:#dcfce7,stroke:#4ade80,color:#111111
+    style State fill:#fef3c7,stroke:#fbbf24,color:#111111
+    style Security fill:#fee2e2,stroke:#f87171,color:#111111
+    style Operator fill:#dcfce7,stroke:#4ade80,color:#111111
+```
+
+**Dostarczanie: CI/CD i GitOps** (Delivery pipeline):
+
+```mermaid
+flowchart LR
+    classDef client fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#ffffff;
+    classDef k8s fill:#0f3b6d,stroke:#38bdf8,stroke-width:2px,color:#ffffff;
+    classDef cicd fill:#3b1d5c,stroke:#c084fc,stroke-width:2px,color:#ffffff;
+    classDef storage fill:#522e0a,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
+    classDef obs fill:#0e462a,stroke:#4ade80,stroke-width:2px,color:#ffffff;
+
+    DEV["Developer<br/>git push to main"]:::client
+    subgraph GHA ["GitHub Actions (5 jobs)"]
+        direction TB
+        J1["lint-and-validate<br/>yamllint, shellcheck, kubeconform"]:::cicd
+        J2["security-audit<br/>Trivy IaC"]:::cicd
+        J3["integration-test<br/>kind cluster, test Job"]:::cicd
+        J4["build-scan-push<br/>build, Trivy image, push"]:::cicd
+        J5["gitops-bump<br/>commit new image tag"]:::cicd
+        J1 --> J2
+        J1 --> J3
+        J2 --> J4
+        J3 --> J4
+        J4 --> J5
+    end
+    GHCR[("ghcr.io<br/>mcp-agent image")]:::storage
+    GIT["Git repository main<br/>k8s/overlays, image tag"]:::cicd
+    ARGO["ArgoCD<br/>automated sync, prune, self-heal"]:::cicd
+    APP1["inference-monitoring-app<br/>namespace inference-monitoring"]:::k8s
+    APP2["kube-prometheus-stack and<br/>operator-stack-resources<br/>namespace monitoring"]:::obs
+
+    DEV --> J1
+    J4 -->|push image| GHCR
+    J5 -->|commit tag| GIT
+    ARGO -->|poll| GIT
+    ARGO --> APP1
+    ARGO -->|Helm chart + addon| APP2
+    GHCR -.->|image pull| APP1
+
+    style GHA fill:#f3e8ff,stroke:#c084fc,color:#111111
 ```
 
 ## 3. Procedura Testów Wdrożonego Systemu

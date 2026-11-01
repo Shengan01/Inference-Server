@@ -172,6 +172,14 @@ class MockTritonHandler(BaseHTTPRequestHandler):
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
 
+        elif path == "/_mock/reset":
+            # Test helper: back to the conservative default batch capacity
+            state.reconfigure(32)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status": "reset", "max_num_seqs": 32}')
+
         elif "/load" in path or "/unload" in path:
             # Hot reload endpoint
             try:

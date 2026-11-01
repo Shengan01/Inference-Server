@@ -183,6 +183,14 @@ async def main():
     print(f"MCP Agent URL: {MCP_AGENT_URL}")
     print("==========================================================")
 
+    # 0. Przywrocenie stanu bazowego mocka (max_num_seqs=32), zeby test byl powtarzalny.
+    #    Prawdziwy Triton nie ma tego endpointu - blad jest ignorowany.
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(f"{TRITON_URL}/_mock/reset", timeout=5.0)
+        except Exception:
+            pass
+
     # 1. Warm-up / Sprawdzenie dostepnosci
     async with httpx.AsyncClient() as client:
         try:
