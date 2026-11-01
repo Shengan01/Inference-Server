@@ -2,8 +2,21 @@
 
 **Przedmiot:** Bezpieczeństwo CI/CD / Zaawansowane Środowiska Chmurowe i Konteneryzacja
 **Temat:** 3 – System zbierania metryk i monitoringu (Prometheus + Grafana + własny eksporter)
-**Repozytorium:** https://github.com/Shengan01/Inference-Server
 **Data weryfikacji:** 2026-10-31 (klaster Minikube + GitHub Actions)
+
+## Linki do projektu (repozytorium publiczne)
+
+| Zasób | Adres |
+| :--- | :--- |
+| Repozytorium (kod, manifesty, dokumentacja) | https://github.com/Shengan01/Inference-Server |
+| GitHub Actions (potok CI/CD, wszystkie przebiegi) | https://github.com/Shengan01/Inference-Server/actions |
+| Definicja potoku | https://github.com/Shengan01/Inference-Server/blob/main/.github/workflows/ci-cd.yaml |
+| Przykładowy przebieg z raportem testów (artefakt `test-report`) | https://github.com/Shengan01/Inference-Server/actions/runs/41239646305 |
+| Historia zmian (commity) | https://github.com/Shengan01/Inference-Server/commits/main |
+| Manifesty Kubernetes (`base`, `overlays`, `addons`, `gitops`) | https://github.com/Shengan01/Inference-Server/tree/main/k8s |
+| Obraz kontenera (GitHub Container Registry) | https://github.com/Shengan01/Inference-Server/pkgs/container/mcp-agent |
+| Instrukcja uruchomienia i testów | https://github.com/Shengan01/Inference-Server/blob/main/docs/INSTRUKCJA_URUCHOMIENIA_I_TESTOW.md |
+
 
 Projekt dotyczy zarządzania klastrem Kubernetes: wdrożenia, bezpieczeństwa, obserwowalności, CI/CD i GitOps. Serwowany model (mock Triton) jest tu tylko obciążeniem generującym metryki.
 
