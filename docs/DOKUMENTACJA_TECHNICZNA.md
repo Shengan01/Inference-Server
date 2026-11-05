@@ -55,7 +55,7 @@ flowchart LR
         direction TB
         subgraph Workloads ["Inference and control workloads"]
             direction LR
-            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>mock on cpu-demo"]:::k8s
+            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>vLLM on GPU (mock on cpu-demo)"]:::k8s
             AGENT["MCP Agent and exporter<br/>Deployment, Python :5000"]:::k8s
         end
         subgraph Observability ["Observability layer"]
@@ -325,6 +325,8 @@ Procedura działa **wewnątrz klastra** jako `Job` (`k8s/tests/loadgen-job.yaml`
 Opóźnienie serwera jest liczone z liczników Prometheusa (`Δ nv_inference_request_duration_us / Δ nv_inference_request_success`), czyli tak samo jak w regule alertu. Opóźnienie mierzone przez klienta jest raportowane pomocniczo.
 
 **Kryteria PASS** (skrypt kończy się kodem != 0, gdy któreś nie jest spełnione): skuteczność żądań ≥ 95% w fazach 1 i 3; `/reconfigure` zwraca 200; wszystkie cele Prometheusa `up` i reguły alertów załadowane; opóźnienie serwera w fazie 2 > 2× bazowe i > 25 ms; w fazie 3 < 30 ms oraz < 50% wartości z fazy 2.
+
+**Wariant GPU.** Ta sama procedura uruchomiona z `TEST_PROFILE=gpu` działa na prawdziwym Triton z vLLM (Minikube z GPU, `scripts/deploy_minikube_gpu.sh`): żądania idą na endpoint `/generate`, silnik startuje od `max_num_seqs = 4`, a porównywane opóźnienie jest mierzone end-to-end w klastrze. Typowy wynik na RTX 4080 SUPER: ok. 370 → 2850 → 980 ms (CALM → STORM → po hot-reload), 100% skuteczności; szczegóły i zrzuty w `docs/ZADANIE_3_IMPLEMENTACJA_I_SPRAWOZDANIE.md`. Tabela poniżej pochodzi z CI (mock Triton, runner bez GPU).
 
 ### 7.2. Raport Wyników z Realizacji Testu
 Wyniki z przebiegu CI (job `integration-test`, klaster `kind` na runnerze GitHub Actions, run [41239646305](https://github.com/Shengan01/Inference-Server/actions/runs/41239646305), commit `7fee486`; artefakt `test-report`). Każdy kolejny build publikuje nowy raport; wynik `FAIL` któregokolwiek kryterium przerywa pipeline.

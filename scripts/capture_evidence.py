@@ -58,6 +58,15 @@ STEPS = [
      "http://inference.local/grafana/ -o /dev/null -w '%{http_code}') (przekierowanie na HTTPS)\"", {}),
     ("a11_gitops", "GitOps: aplikacje ArgoCD i profil operatora", "cmd",
      "kubectl -n argocd get applications && kubectl -n monitoring get pods", {}),
+    ("a12_gpu_node", "GPU w klastrze: zasób nvidia.com/gpu i karta widoczna w podzie Tritona", "cmd",
+     "kubectl describe node | grep -E 'nvidia.com/gpu' ; echo; "
+     f"kubectl -n {NS} exec deploy/triton-server -c triton-server -- nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv", {}),
+    ("a13_triton_real", "Prawdziwy Triton + vLLM: model załadowany i generuje tekst", "cmd",
+     f"kubectl -n {NS} exec deploy/triton-server -c triton-server -- sh -c \""
+     "curl -s localhost:8000/v2/health/ready -o /dev/null -w 'server ready: HTTP %{http_code}\\n'; "
+     "curl -s localhost:8000/v2/models/finance-qwen/ready -o /dev/null -w 'model finance-qwen ready: HTTP %{http_code}\\n'; "
+     "curl -s -X POST localhost:8000/v2/models/finance-qwen/generate "
+     "-d '{\\\"text_input\\\":\\\"Analyze Q3 tech market earnings.\\\",\\\"parameters\\\":{\\\"stream\\\":false,\\\"temperature\\\":0,\\\"max_tokens\\\":24}}'; echo\"", {}),
     # ---- tests (numbering as in the task 2 report) ----------------------------------------------
     ("t01_deployment_quota", "Test 1: integralność wdrożenia i quota", "cmd",
      f"kubectl -n {NS} get pods,pvc && kubectl -n {NS} describe resourcequota inference-monitoring-quota | tail -9", {}),
@@ -69,8 +78,11 @@ STEPS = [
     ("t03_prometheus_targets", "Test 3: Prometheus UI, Status > Targets", "web", "http://localhost:9090/targets",
      {"size": (1500, 800)}),
     ("t45_load_test", "Testy 4 i 5: skok obciążenia, alert, hot-reload (Job w klastrze)", "cmd",
-     "LOADGEN_IMAGE=$(kubectl -n inference-monitoring get deploy mcp-agent -o jsonpath='{.spec.template.spec.containers[0].image}') "
+     "TEST_PROFILE=gpu LOADGEN_IMAGE=$(kubectl -n inference-monitoring get deploy mcp-agent -o jsonpath='{.spec.template.spec.containers[0].image}') "
      "./scripts/run_in_cluster_test.sh 2>&1 | grep -v REPORT_JSON | tail -22", {"timeout": 600}),
+    ("t45_vllm_engine_log", "Testy 4 i 5: log silnika vLLM, kolejka i przeładowanie (Triton)", "cmd",
+     f"kubectl -n {NS} logs deploy/triton-server -c triton-server | grep -E 'metrics.py:341|Initializing an LLM engine' "
+     "| sed -E 's/Avg prompt throughput: [0-9.]+ tokens\\/s, //; s/, GPU KV cache usage.*//; s/Initializing an LLM engine.*/ENGINE (RE)INIT/' | tail -16", {}),
     ("t45_grafana_dashboard", "Testy 4 i 5: dashboard Grafany po teście", "web", "GRAFANA_DASHBOARD",
      {"size": (1600, 1000), "budget": 25000}),
     ("t45_prometheus_alerts", "Testy 4 i 5: alerty w Prometheusie", "web", "http://localhost:9090/alerts",

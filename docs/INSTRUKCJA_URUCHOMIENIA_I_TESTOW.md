@@ -24,7 +24,7 @@ minikube start --driver=docker --cpus=6 --memory=12288
 
 ```bash
 ./scripts/deploy_minikube.sh cpu-demo        # profil demonstracyjny (mock Triton, bez GPU)
-# ./scripts/deploy_minikube.sh gpu           # klaster z kartą NVIDIA
+# ./scripts/deploy_minikube_gpu.sh             # prawdziwy Triton + vLLM na GPU (rozdz. 2a)
 ```
 
 Skrypt: uruchamia Minikube (jeśli nie działa), włącza dodatki `ingress` i `metrics-server`, buduje obraz `mcp-agent:local`, tworzy sekrety (`scripts/bootstrap_secrets.sh`), stosuje overlay `k8s/overlays/local-cpu` i czeka na gotowość podów.
@@ -39,6 +39,28 @@ kubectl -n inference-monitoring get pods,pvc,svc,ingress
 ```
 
 Oczekiwane: 5 podów `Running` (`prometheus-0`, `grafana`, `alertmanager`, `mcp-agent`, `triton-server`), dwa PVC `Bound` (`prometheus-storage-prometheus-0` 2Gi, `grafana-storage` 1Gi).
+
+## 2a. Wariant GPU (prawdziwy Triton + vLLM)
+
+Wymagania hosta: sterownik NVIDIA, `nvidia-container-toolkit` ze skonfigurowanym runtime w Dockerze oraz pliki modelu w `models/finance-qwen/1/` (`model.safetensors`, `config.json`, pliki tokenizera; nie są w repozytorium).
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default && sudo systemctl restart docker   # jednorazowo
+docker run --rm --gpus all ubuntu nvidia-smi -L                                                          # sprawdzenie
+./scripts/deploy_minikube_gpu.sh
+```
+
+Skrypt tworzy osobny profil Minikube `gpu` (GPU przekazane do węzła, wtyczka urządzeń NVIDIA), kopiuje model na węzeł, pobiera obraz Tritona z vLLM (kilkanaście GB przy pierwszym uruchomieniu), buduje obraz agenta i stosuje overlay `local-gpu`. Konfiguracja silnika (`config.pbtxt`, `model.json`) jest zasiewana z ConfigMap na wspólny wolumen modelu, który współdzielą Triton i agent (agent edytuje `model.json`, a Triton przeładowuje silnik).
+
+Weryfikacja i test na GPU:
+
+```bash
+kubectl describe node | grep nvidia.com/gpu
+kubectl -n inference-monitoring exec deploy/triton-server -c triton-server -- nvidia-smi
+TEST_PROFILE=gpu LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh
+```
+
+Profil `TEST_PROFILE=gpu` wysyła żądania na endpoint `/generate`, startuje od `max_num_seqs = 4` i porównuje opóźnienie end-to-end mierzone w klastrze (Triton z vLLM jest modelem „decoupled”, więc jego liczniki nie mierzą czasu generowania). Wdrożenie GPU przez GitOps: `kubectl apply -f k8s/gitops/argocd-application-gpu.yaml` (zamiast `argocd-application.yaml`).
 
 ## 3. Dostęp do usług
 
@@ -60,7 +82,7 @@ curl -sk --resolve inference.local:443:$(minikube ip) https://inference.local/gr
 | Usługa | Adres | Uwagi |
 | :--- | :--- | :--- |
 | Grafana | `https://inference.local/grafana/` | login `admin`, hasło poniżej |
-| Triton (mock) | `https://inference.local/v2/health/ready` | |
+| Triton | `https://inference.local/v2/health/ready` | mock w profilu `cpu-demo`, vLLM w profilu GPU |
 | MCP Agent | `https://inference.local/mcp/health` | `/mcp/...` jest przepisywane na `/...` |
 | Prometheus | `kubectl -n inference-monitoring port-forward svc/prometheus-service 9090:9090` | bez uwierzytelniania, dlatego bez Ingress |
 | Alertmanager | `kubectl -n inference-monitoring port-forward svc/alertmanager-service 9093:9093` | j.w. |
@@ -95,7 +117,7 @@ Fazy: **CALM** (20 żądań/s), **STORM** (seria 400 równoczesnych żądań na 
 
 Po teście możesz obejrzeć wykresy w Grafanie (dashboard *Autonomous Inference Cluster*) i aktywne alerty w Prometheusie (`/alerts`).
 
-Test można uruchamiać wielokrotnie: na początku sam przywraca mock Tritona do stanu bazowego (`max_num_seqs` = 32, endpoint `/_mock/reset`; prawdziwy Triton go nie ma i ignoruje to wywołanie).
+Test można uruchamiać wielokrotnie: na początku sam przywraca stan bazowy (mock: endpoint `/_mock/reset`, `max_num_seqs` = 32; prawdziwy silnik: ustawienie `max_num_seqs` przez agenta i poczekanie na przeładowanie modelu).
 
 ### 4.3. Walidacja manifestów lokalnie (bez klastra)
 

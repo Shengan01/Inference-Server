@@ -7,6 +7,11 @@ echo "=========================================================="
 
 MODE=${1:-"cpu-demo"}
 
+# The GPU profile needs its own Minikube profile, the model on the node and the NVIDIA runtime.
+if [ "$MODE" == "gpu" ]; then
+    exec ./scripts/deploy_minikube_gpu.sh
+fi
+
 # 1. Sprawdzenie Minikube
 if ! minikube status >/dev/null 2>&1; then
     echo "Minikube nie jest uruchomiony. Startowanie minikube..."

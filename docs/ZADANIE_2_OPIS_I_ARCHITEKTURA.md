@@ -66,7 +66,7 @@ flowchart LR
         direction TB
         subgraph Workloads ["Inference and control workloads"]
             direction LR
-            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>mock on cpu-demo"]:::k8s
+            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>vLLM on GPU (mock on cpu-demo)"]:::k8s
             AGENT["MCP Agent and exporter<br/>Deployment, Python :5000"]:::k8s
         end
         subgraph Observability ["Observability layer"]
@@ -201,6 +201,8 @@ Procedura testowa pozwala na obiektywną, powtarzalną i weryfikowalną ocenę o
   1. Kontroler dokonuje bezprzerwowej rekonfiguracji Tritona (*zero-downtime hot reload* – 100% zapytań zwraca kod 200).
   2. Metryka `triton_config_max_num_seqs` w Prometheusie aktualizuje się do wartości `512`.
   3. Średnie opóźnienie serwera spada o ponad 50% względem fazy burzy (powrót poniżej 30 ms), a alert `HighInferenceLatency` samoczynnie powraca do stanu `RESOLVED`.
+
+> **Wariant GPU (Testy 4 i 5):** na prawdziwym Triton z vLLM (`TEST_PROFILE=gpu`) kryteria są te same, ale opóźnienie porównywane jest end-to-end z poziomu klastra, a silnik startuje od `max_num_seqs = 4`; hot-reload zmienia `model.json` (argumenty silnika vLLM) i przeładowuje model.
 
 ### Test 6: GitOps – synchronizacja i self-heal (ArgoCD)
 * **Procedura:** `kubectl apply -f k8s/gitops/argocd-application.yaml`, odczekanie na synchronizację (`kubectl -n argocd get app inference-monitoring-app`), a następnie ręczne usunięcie `alertmanager-service` i wyzerowanie replik Grafany (`kubectl scale deploy/grafana --replicas=0`).

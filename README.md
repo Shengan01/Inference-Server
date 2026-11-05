@@ -46,7 +46,7 @@ flowchart LR
         direction TB
         subgraph Workloads ["Inference and control workloads"]
             direction LR
-            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>mock on cpu-demo"]:::k8s
+            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>vLLM on GPU (mock on cpu-demo)"]:::k8s
             AGENT["MCP Agent and exporter<br/>Deployment, Python :5000"]:::k8s
         end
         subgraph Observability ["Observability layer"]
@@ -171,7 +171,7 @@ flowchart LR
 * **Pipeline Auditing:** The CI/CD workflow uses `yamllint`, `shellcheck`, `kubeconform` (all rendered overlays), `trivy` (IaC scan fails on CRITICAL, image scan fails on fixable HIGH/CRITICAL) and an end-to-end test on `kind`.
 
 ### 3. Dual Runtime Profiles
-* **`k8s/overlays/gpu`:** Production profile requesting physical NVIDIA GPU resources (`nvidia.com/gpu: 1`) for Triton + vLLM.
+* **`k8s/overlays/gpu`:** Real Triton + vLLM on the host NVIDIA GPU (`nvidia.com/gpu: 1`), model on a shared PV/PVC, engine arguments in `model.json` edited by the agent. Verified on an RTX 4080 SUPER with Minikube (`scripts/deploy_minikube_gpu.sh`).
 * **`k8s/overlays/cpu-demo`:** Lightweight mock runtime in Python that reproduces Triton APIs and Prometheus metrics for local testing without GPU hardware (< 60 MB RAM).
 
 ### 4. GitOps Workflow
@@ -209,8 +209,9 @@ Deploy to Minikube with required addons and health checks:
 # Deploy lightweight demonstration profile:
 ./scripts/deploy_minikube.sh cpu-demo
 
-# Or deploy with physical NVIDIA GPU support:
-./scripts/deploy_minikube.sh gpu
+# Or deploy the real Triton + vLLM on the host GPU (dedicated Minikube profile; needs the NVIDIA
+# runtime in Docker and the model files in models/finance-qwen/1/):
+./scripts/deploy_minikube_gpu.sh
 ```
 
 ### 2. Service Access
@@ -241,7 +242,8 @@ Run the automated RBAC, network policy, and container permission check:
 ### 4. Load and Reconfiguration Testing
 The test procedure runs as a Job inside the cluster (so results are not distorted by `port-forward`), exits non-zero when a check fails, and writes `test-output.log` and `test-report.json`. The same procedure runs in CI on `kind` and uploads the report as a build artifact:
 ```bash
-LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh
+LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh                   # mock Triton
+TEST_PROFILE=gpu LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh  # real Triton on the GPU
 ```
 * **Phase 1: Baseline (20 RPS):** normal load, low server-side latency.
 * **Phase 2: Load Spike (400 concurrent requests per second):** in-flight requests exceed `max_num_seqs`, server-side latency rises and `HighInferenceQueueDepth` fires.
@@ -285,7 +287,8 @@ Latency is computed from Prometheus counters (`nv_inference_request_duration_us 
 │       ├── argocd-application.yaml          # Core stack Application
 │       └── argocd-application-operator.yaml # Operator profile Applications
 ├── scripts/
-│   ├── deploy_minikube.sh           # Deployment automation script
+│   ├── deploy_minikube.sh           # Deployment automation script (CPU / mock profile)
+│   ├── deploy_minikube_gpu.sh       # GPU Minikube profile + real Triton and vLLM
 │   ├── bootstrap_secrets.sh         # Creates Grafana and TLS secrets (not stored in Git)
 │   ├── mock_triton_server.py        # Lightweight mock Triton server
 │   ├── build_pdfs.py                # Builds docs/pdf/*.pdf from the Markdown documents

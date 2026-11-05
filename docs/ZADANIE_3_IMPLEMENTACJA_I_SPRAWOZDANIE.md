@@ -2,7 +2,7 @@
 
 **Przedmiot:** Bezpieczeństwo CI/CD / Zaawansowane Środowiska Chmurowe i Konteneryzacja
 **Temat:** 3 – System zbierania metryk i monitoringu (Prometheus + Grafana + własny eksporter w Pythonie)
-**Data wykonania zrzutów i testów:** 2026-11-05 (Minikube v1.35 + GitHub Actions)
+**Data wykonania zrzutów i testów:** 2026-11-05 (Minikube z GPU NVIDIA RTX 4080 SUPER + GitHub Actions)
 
 ## Linki do projektu (repozytorium publiczne)
 
@@ -25,11 +25,11 @@
 
 ## 1. Potwierdzenie wdrożenia w klastrze Kubernetes
 
-**Środowisko:** jednowęzłowy klaster Minikube (sterownik Docker, Kubernetes v1.35), namespace `inference-monitoring`. System wdrożono dwiema równoważnymi ścieżkami: skryptem lokalnym oraz GitOps (ArgoCD synchronizuje klaster z repozytorium).
+**Środowisko:** jednowęzłowy klaster Minikube (sterownik Docker, Kubernetes v1.35) z dostępem do **GPU NVIDIA GeForce RTX 4080 SUPER (16 GB)**, namespace `inference-monitoring`. Serwer inferencji to **prawdziwy Triton z backendem vLLM** (obraz `tritonserver:24.06-vllm-python-py3`) obsługujący model Qwen2-1.5B (GPTQ) na GPU. System wdrożono dwiema równoważnymi ścieżkami: skryptem lokalnym oraz GitOps (ArgoCD synchronizuje klaster z repozytorium).
 
 ```bash
-./scripts/deploy_minikube.sh cpu-demo                      # wdrożenie lokalne (Kustomize, overlay local-cpu)
-kubectl apply -f k8s/gitops/argocd-application.yaml        # wdrożenie GitOps (overlay cpu-demo z gałęzi main)
+./scripts/deploy_minikube_gpu.sh                           # klaster Minikube z GPU + wdrożenie lokalne (overlay local-gpu)
+kubectl apply -f k8s/gitops/argocd-application-gpu.yaml    # wdrożenie GitOps (overlay gpu z gałęzi main)
 ```
 
 ### 1.1. Mapa wymaganych obiektów
@@ -37,11 +37,11 @@ kubectl apply -f k8s/gitops/argocd-application.yaml        # wdrożenie GitOps (
 | Obiekt | Konfiguracja w projekcie | Manifest | Zrzut |
 | :--- | :--- | :--- | :---: |
 | **StatefulSet** | `prometheus`: stała tożsamość, `volumeClaimTemplates` (2Gi), retencja 15 dni, probes, `securityContext` | `k8s/base/prometheus/statefulset.yaml` | 1.3 |
-| **Deployment** | `grafana`, `alertmanager`, `mcp-agent` (eksporter), `triton-server` (mock); probes, strategia `Recreate` dla Grafany (PVC RWO) | `k8s/base/*/deployment.yaml`, `k8s/overlays/cpu-demo/` | 1.3 |
+| **Deployment** | `grafana`, `alertmanager`, `mcp-agent` (eksporter), `triton-server` (Triton + vLLM, zasób `nvidia.com/gpu`); probes (w tym `startupProbe` dla ładowania modelu), strategia `Recreate` (PVC RWO, jedno GPU) | `k8s/base/*/deployment.yaml`, `k8s/overlays/gpu/` | 1.3 |
 | **Service** | 5 × `ClusterIP` (Prometheus, Alertmanager, Grafana, Triton, MCP Agent), nazwane porty | `k8s/base/*/service.yaml` | 1.4 |
 | **Ingress** | NGINX, TLS, host `inference.local`; ścieżki `/grafana`, `/v2`, `/mcp` (rewrite) | `k8s/base/ingress/ingress.yaml` | 1.4 |
-| **PVC** | `prometheus-storage-prometheus-0` 2Gi (z szablonu StatefulSet), `grafana-storage` 1Gi | `k8s/base/grafana/pvc.yaml`, StatefulSet | 1.5 |
-| **ConfigMap** | konfiguracja Prometheusa i Alertmanagera, reguły alertów, datasource i dashboard Grafany, konfiguracja modelu | `k8s/base/*/configmap*.yaml` | 1.6 |
+| **PVC** | `prometheus-storage-prometheus-0` 2Gi (z szablonu StatefulSet), `grafana-storage` 1Gi, `model-repository` 5Gi (wspólny dla Tritona i agenta; PV `hostPath`) | `k8s/base/grafana/pvc.yaml`, StatefulSet, `k8s/overlays/gpu/model-storage.yaml` | 1.5 |
+| **ConfigMap** | konfiguracja Prometheusa i Alertmanagera, reguły alertów, datasource i dashboard Grafany, `config.pbtxt` i `model.json` modelu | `k8s/base/*/configmap*.yaml`, `k8s/overlays/gpu/model-json-configmap.yaml` | 1.6 |
 | **Secret** | `grafana-secret` (Opaque), `inference-tls` (`kubernetes.io/tls`); tworzone skryptem, bez wartości w Git; wzór w repozytorium | `scripts/bootstrap_secrets.sh`, `k8s/examples/secrets.example.yaml` | 1.6 |
 | **NetworkPolicy** | `default-deny-all` + 6 reguł dla każdej pary komunikujących się usług | `k8s/base/network-policy.yaml` | 1.7 |
 | **Requests i limits** | jawne `requests` i `limits` CPU/pamięć w każdym kontenerze (także init-container) | manifesty workloadów | 1.8 |
@@ -62,7 +62,22 @@ kubectl -n inference-monitoring get deployments,statefulsets,pods
 ```
 ![Deployment, StatefulSet, Pod](img/a02_workloads.png)
 
-Komentarz: Prometheus działa jako StatefulSet (dane szeregów czasowych na trwałym wolumenie), pozostałe komponenty jako Deployment. Wszystkie pody są w stanie `Running 1/1`. Restarty wynikają z zatrzymania i ponownego uruchomienia Minikube przed wykonaniem zrzutów.
+Komentarz: Prometheus działa jako StatefulSet (dane szeregów czasowych na trwałym wolumenie), pozostałe komponenty jako Deployment. Wszystkie pody są w stanie `Running 1/1`.
+
+Serwer inferencji korzysta z GPU: węzeł udostępnia Kubernetesowi zasób `nvidia.com/gpu` (wtyczka urządzeń NVIDIA), a pod Tritona widzi kartę:
+
+```bash
+kubectl describe node | grep nvidia.com/gpu
+kubectl -n inference-monitoring exec deploy/triton-server -c triton-server -- nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv
+```
+![GPU w klastrze](img/a12_gpu_node.png)
+
+Model jest załadowany w prawdziwym Triton (backend vLLM) i generuje tekst:
+
+```bash
+kubectl -n inference-monitoring exec deploy/triton-server -c triton-server -- curl -s -X POST localhost:8000/v2/models/finance-qwen/generate -d '{"text_input":"...","parameters":{"stream":false,"max_tokens":24}}'
+```
+![Triton z vLLM](img/a13_triton_real.png)
 
 ### 1.4. Service i Ingress
 
@@ -128,6 +143,7 @@ kubectl -n argocd get applications && kubectl -n monitoring get pods
 | `ServiceAccount` ×5, `ClusterRole` + `ClusterRoleBinding` | RBAC najmniejszych uprawnień: osobne konta dla każdego komponentu, Prometheus tylko do odczytu (bez dostępu do Secrets) |
 | `Namespace` z etykietami Pod Security | `enforce: baseline`, `audit`/`warn: restricted` |
 | `securityContext` + probes | `runAsNonRoot`, `drop: ALL`, `seccomp: RuntimeDefault`, `readinessProbe`/`livenessProbe` w każdym komponencie |
+| `PersistentVolume` (hostPath) + zasób `nvidia.com/gpu` + `startupProbe` | wspólny wolumen modelu dla Tritona i agenta; GPU przydzielane jako zasób rozszerzony przez wtyczkę urządzeń NVIDIA; `startupProbe` chroni przed zabiciem poda w trakcie ładowania modelu |
 | `Job` + `NetworkPolicy` testowe | generator obciążenia działa wewnątrz klastra (bez narzutu `port-forward`) |
 | `ServiceMonitor` ×2, `PrometheusRule` (CRD) | profil Prometheus Operator, wykrywanie celów przez zasoby Kubernetes |
 | Helm (`kube-prometheus-stack`) | gotowy stos operatora wdrażany z własnymi wartościami |
@@ -168,24 +184,30 @@ Interfejs Prometheusa (Status → Targets):
 **Wynik:** Cele `prometheus`, `triton` i `mcp_agent_config` mają stan `up`, Alertmanager jest podłączony.
 
 ### Testy 4 i 5: skok obciążenia, alert, hot-reload i powrót do normy
-**Cel:** pod wpływem obciążenia rośnie opóźnienie i uruchamia się alert; agent SRE zmienia `max_num_seqs` z 32 na 512 bez przestoju, a opóźnienie wraca do wartości bazowej (Zadanie 2, Testy 4 i 5). Test działa jako Job w klastrze.
+**Cel:** pod wpływem obciążenia rośnie opóźnienie; agent SRE zwiększa `max_num_seqs` (pojemność batcha silnika vLLM) bez przestoju usługi, a opóźnienie wraca do wartości bliskiej bazowej (Zadanie 2, Testy 4 i 5). Test działa jako Job wewnątrz klastra i wysyła prawdziwe żądania generowania tekstu (`/generate`, 64 tokeny) do Tritona z vLLM na GPU. Silnik startuje z zachowawczym `max_num_seqs = 4`; w fazie STORM wysyłanych jest 60 równoczesnych żądań na sekundę, a rekonfiguracja ustawia `max_num_seqs = 512`.
 ```bash
-LOADGEN_IMAGE=<obraz mcp-agent> ./scripts/run_in_cluster_test.sh
+TEST_PROFILE=gpu LOADGEN_IMAGE=<obraz mcp-agent> ./scripts/run_in_cluster_test.sh
 ```
 ![Testy 4 i 5, wynik](img/t45_load_test.png)
 
-| Faza | Żądań/s | Wysłane | Pomyślne | Opóźnienie serwera [ms] |
+| Faza | Żądań/s | Wysłane | Pomyślne | Śr. opóźnienie end-to-end [ms] |
 | :--- | :---: | :---: | :---: | :---: |
-| 1. CALM | 20 | 200 | 200 | 15.8 |
-| 2. STORM | 400 | 6000 | 6000 | **202.1** |
-| 3. RESOLUTION (po hot-reload) | 400 | 6000 | 6000 | **14.2** |
+| 1. CALM | 4 | 40 | 40 | 354 |
+| 2. STORM (`max_num_seqs` = 4) | 60 | 180 | 180 | **2797** |
+| 3. RESOLUTION (po hot-reload, `max_num_seqs` = 512) | 60 | 840 | 840 | **974** |
 
-Dashboard Grafany po teście (dwa kolejne przebiegi testu: skok ruchu i opóźnienia, następnie powrót do normy; `max_num_seqs` = 512 po hot-reload):
+Zachowanie silnika widać w logu vLLM (kolumny `running` i `pending`): w fazie STORM silnik obsługuje 4 żądania naraz, a kolejne czekają w kolejce (`pending` > 0); po przeładowaniu z nowym `max_num_seqs` pracuje na kilkudziesięciu żądaniach jednocześnie i kolejka znika:
+```bash
+kubectl -n inference-monitoring logs deploy/triton-server -c triton-server | grep -E 'metrics.py:341|Initializing an LLM engine'
+```
+![Log silnika vLLM](img/t45_vllm_engine_log.png)
+
+Dashboard Grafany po teście (dwa kolejne przebiegi testu; wykresy GPU, przepustowości i kolejki):
 ![Dashboard Grafany](img/t45_grafana_dashboard.png)
 Alerty w Prometheusie i w Alertmanagerze:
 ![Alerty w Prometheusie](img/t45_prometheus_alerts.png)
 ![Alertmanager](img/t45_alertmanager.png)
-**Wynik:** wszystkie 7 kryteriów spełnionych. Skuteczność żądań 100%, opóźnienie serwera rośnie w burzy ponad 12.8× względem bazowego i wraca do poziomu bazowego po hot-reload; aktywny alert: HighInferenceQueueDepth. Opóźnienie liczone jest z liczników Prometheusa (`Δ nv_inference_request_duration_us / Δ nv_inference_request_success`), czyli tak samo jak w regule alertu.
+**Wynik:** wszystkie 7 kryteriów spełnionych. Skuteczność żądań 100%, opóźnienie rośnie w burzy ponad 7.9× względem bazowego, a po hot-reload spada do 974 ms (około 2.9× mniej niż w burzy). Opóźnienie jest mierzone end-to-end wewnątrz klastra, ponieważ model vLLM jest „decoupled”: Triton nie raportuje czasu generowania w `nv_inference_request_duration_us`, a w tej wersji obrazu (24.06) nie ma metryk vLLM. Test jest powtarzalny (trzy kolejne przebiegi dały zbliżone wyniki).
 
 ### Test 6: GitOps, self-heal ArgoCD
 **Cel:** ręczne zmiany w klastrze są cofane do stanu z repozytorium (Zadanie 2, Test 6).
@@ -215,7 +237,7 @@ https://github.com/Shengan01/Inference-Server/actions
 ```
 ![Test 8, lista przebiegów](img/t08_github_actions.png)
 ![Test 8, szczegóły przebiegu](img/t08_github_actions_run.png)
-**Wynik:** Przebiegi na gałęzi `main` kończą się sukcesem (5 jobów: walidacja manifestów, skan bezpieczeństwa, test na `kind`, zbudowanie i skan obrazu, aktualizacja tagu w Git).
+**Wynik:** Przebiegi na gałęzi `main` kończą się sukcesem (5 jobów: walidacja manifestów, skan bezpieczeństwa, test na `kind`, zbudowanie i skan obrazu, aktualizacja tagu w Git). Na liście przebiegów widać też trzy wcześniejsze, nieudane przebiegi z dnia poprawek (przyczyna: sprawdzenie jawnych haseł w manifestach traktowało wzorcowy plik `k8s/examples/secrets.example.yaml` jako wyciek); po naprawie wszystkie kolejne przebiegi są zielone.
 
 ## 3. Komentarz do funkcjonalności (zakładana i osiągnięta)
 
@@ -224,12 +246,14 @@ https://github.com/Shengan01/Inference-Server/actions
 **Osiągnięte.** Wszystkie wymagane obiekty (rozdz. 1.1) są skonfigurowane i działają, a testy 1–8 kończą się wynikiem pozytywnym. System reaguje na przeciążenie (alert), a agent SRE przywraca opóźnienie do wartości bazowej bez przestoju. Dodatkowo wdrożono profil Prometheus Operator, GitOps i potok CI/CD z testem na `kind`.
 
 **Ograniczenia (uczciwie):**
-* Wdrożenie i testy wykonano na profilu `cpu-demo`, w którym serwer inferencji jest **mockiem Tritona** (emuluje API i metryki; nie wykorzystuje GPU). Profil `gpu` (prawdziwy Triton z vLLM) nie był jeszcze uruchamiany. Wartości bezwzględne opóźnień zależą od modelu mocka i mocy maszyny; istotny jest kierunek zmiany i powrót do normy.
-* Opóźnienie po stronie klienta (kilkaset ms przy 400 równoczesnych żądaniach) zależy od mocy generatora i nie opisuje usługi, dlatego w wynikach podano opóźnienie z Prometheusa.
-* Alertmanager nie ma skonfigurowanego odbiorcy (e-mail/webhook); alerty są widoczne w jego interfejsie. Reguła `HighInferenceLatency` nie jest wymagana przez żaden test; w teście aktywny jest `HighInferenceQueueDepth`.
+* **Opóźnienie na dashboardzie.** Panel *Request Latency* i alert `HighInferenceLatency` korzystają z liczników `nv_inference_request_duration_us`, które dla modelu „decoupled” (vLLM) nie mierzą czasu generowania, więc przy prawdziwym silniku pokazują wartości bliskie zeru. Wiarygodny pomiar opóźnienia daje test (end-to-end w klastrze); panele GPU, przepustowości i kolejki działają poprawnie. Pełniejsze metryki wymagałyby nowszego obrazu Triton z metrykami vLLM.
+* **Dobór parametrów testu.** Silnik startuje od zachowawczego `max_num_seqs = 4`, bo przy tak małym modelu (1,5B) na RTX 4080 wąskim gardłem przy większych wartościach jest narzut Pythona w backendzie vLLM, a nie pojemność batcha. Przy `max_num_seqs` = 32 różnicy między fazami nie było. Wynik pokazuje więc poprawność mechanizmu (zmiana `model.json` → przeładowanie silnika) i jego wpływ w sytuacji, gdy batch jest ograniczeniem.
+* **CI bez GPU.** Runner GitHub Actions nie ma GPU, dlatego test w CI (`kind`) używa profilu `cpu-demo` z mockiem Tritona; ten sam test uruchomiony lokalnie z `TEST_PROFILE=gpu` działa na prawdziwym silniku.
+* **Wdrożenie GPU wymaga przygotowania hosta:** sterownik NVIDIA, runtime NVIDIA w Dockerze oraz pliki modelu w `models/finance-qwen/1/` (nie są w repozytorium). Zainstalowany `nvidia-container-toolkit` 1.12.1 ulega awarii przy `NVIDIA_DRIVER_CAPABILITIES=all`, które minikube przekazuje dla `--gpus`, dlatego skrypt `deploy_minikube_gpu.sh` używa tymczasowej podmiany tej wartości na `compute,utility`.
+* Alertmanager nie ma skonfigurowanego odbiorcy (e-mail/webhook); alerty są widoczne w jego interfejsie. W teście aktywny jest alert `HighInferenceQueueDepth`.
 * TLS jest self-signed, a sekrety tworzone są skryptem (poza Git). W środowisku produkcyjnym należy użyć cert-manager i Sealed/External Secrets.
-* W Minikube kontroler Ingress jest usługą `NodePort` pod `minikube ip` (w chmurze otrzymałby adres LoadBalancera).
-* Podczas wykonywania zrzutów wykryto i poprawiono niezgodność mocka z prawdziwym Triton (`nv_gpu_utilization` jako ułamek 0–1 oraz brakująca metryka `nv_inference_pending_request_count`), która powodowała błędne wartości na dashboardzie.
+* W Minikube kontroler Ingress jest usługą `NodePort` pod `minikube ip` (w chmurze otrzymałby adres LoadBalancera). Wolumen modelu to `hostPath` (jeden węzeł).
+* Podczas pracy wykryto i poprawiono niezgodność mocka z prawdziwym Triton (`nv_gpu_utilization` jako ułamek 0–1, metryka `nv_inference_pending_request_count`) oraz to, że agent zmieniał tylko `config.pbtxt`, którego vLLM nie czyta (teraz aktualizuje też `model.json`).
 
 ---
 
@@ -244,20 +268,21 @@ Plik `README.md` w repozytorium opisuje architekturę, szybki start, strukturę 
 | Ścieżka | Zawartość |
 | :--- | :--- |
 | `k8s/base/` | wspólne manifesty: namespace, RBAC, ResourceQuota/LimitRange, NetworkPolicy, Prometheus (StatefulSet), Grafana, Alertmanager, Ingress, agent |
-| `k8s/overlays/` | profile Kustomize: `cpu-demo`, `gpu`, `local-cpu`, `local-gpu` |
+| `k8s/overlays/` | profile Kustomize: `cpu-demo` (mock Triton), `gpu` (Triton + vLLM na GPU, PV z modelem), `local-cpu`, `local-gpu` |
 | `k8s/addons/operator-stack/` | ServiceMonitory, PrometheusRule, NetworkPolicy i wartości Helm (profil operatora) |
 | `k8s/gitops/` | aplikacje ArgoCD |
 | `k8s/tests/`, `k8s/examples/` | Job generatora obciążenia z NetworkPolicy; wzorcowe manifesty Secret |
 | `mcp_agent/` | własny eksporter metryk i kontroler (Python, FastMCP + FastAPI) |
-| `scripts/` | wdrożenie, sekrety, audyt bezpieczeństwa, test w klastrze, zrzuty, PDF |
+| `scripts/` | wdrożenie (CPU i GPU), sekrety, audyt bezpieczeństwa, test w klastrze, zrzuty, PDF |
 | `.github/workflows/ci-cd.yaml` | potok CI/CD |
 | `docs/` | dokumentacja i sprawozdania (Zadanie 2 i 3, dokumentacja techniczna, instrukcja) oraz `docs/pdf/` |
 
 Odtworzenie wdrożenia (szczegóły w instrukcji):
 ```bash
 git clone https://github.com/Shengan01/Inference-Server.git && cd Inference-Server
-./scripts/deploy_minikube.sh cpu-demo
-LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh
+./scripts/deploy_minikube_gpu.sh                 # klaster z GPU (wymaga plików modelu w models/finance-qwen/1/)
+TEST_PROFILE=gpu LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh
+# bez GPU: ./scripts/deploy_minikube.sh cpu-demo (mock Triton) i test bez TEST_PROFILE
 ```
 
 ---
@@ -283,7 +308,7 @@ flowchart LR
         direction TB
         subgraph Workloads ["Inference and control workloads"]
             direction LR
-            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>mock on cpu-demo"]:::k8s
+            TRITON["Triton Inference Server<br/>Deployment :8000 / :8002<br/>vLLM on GPU (mock on cpu-demo)"]:::k8s
             AGENT["MCP Agent and exporter<br/>Deployment, Python :5000"]:::k8s
         end
         subgraph Observability ["Observability layer"]
