@@ -19,4 +19,4 @@ patches:
 images:
   - name: mcp-agent
     newName: ghcr.io/shengan01/mcp-agent
-    newTag: 04f6c96f328ed9ff5cb53b1cc427929d0b0b4634
+    newTag: 1bd8709cb2c20aebe8f8d6cb599f7dd68a84975a
