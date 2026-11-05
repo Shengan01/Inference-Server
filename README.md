@@ -191,6 +191,7 @@ flowchart LR
 | [docs/ZADANIE_3_IMPLEMENTACJA_I_SPRAWOZDANIE.md](docs/ZADANIE_3_IMPLEMENTACJA_I_SPRAWOZDANIE.md) | Task 3: implementation description and test report |
 | [docs/ZADANIE_2_OPIS_I_ARCHITEKTURA.md](docs/ZADANIE_2_OPIS_I_ARCHITEKTURA.md) | Task 2: functional description, architecture and test procedure |
 | [docs/DOKUMENTACJA_TECHNICZNA.md](docs/DOKUMENTACJA_TECHNICZNA.md) | Detailed technical documentation |
+| [docs/img/](docs/img/) | Screenshots used in the task 3 report (command output and Grafana/Prometheus/Alertmanager/GitHub Actions UIs) |
 | [docs/pdf/](docs/pdf/) | PDF versions of the four documents above (regenerate with `python3 scripts/build_pdfs.py`; needs Chrome and `pip install markdown`) |
 
 ---
@@ -288,6 +289,7 @@ Latency is computed from Prometheus counters (`nv_inference_request_duration_us 
 │   ├── bootstrap_secrets.sh         # Creates Grafana and TLS secrets (not stored in Git)
 │   ├── mock_triton_server.py        # Lightweight mock Triton server
 │   ├── build_pdfs.py                # Builds docs/pdf/*.pdf from the Markdown documents
+│   ├── capture_evidence.py          # Captures command output and UI screenshots into docs/img for the report
 │   ├── test_k8s_simulation.py       # Load testing and verification script (runs in-cluster)
 │   ├── run_in_cluster_test.sh       # Runs the test as a Job and extracts the report
 │   ├── verify_security.sh           # Security audit script

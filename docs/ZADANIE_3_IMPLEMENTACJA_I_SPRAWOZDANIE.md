@@ -1,49 +1,270 @@
 # Zadanie Cząstkowe 3: Implementacja w Kubernetes i Sprawozdanie z Realizacji Testów
 
 **Przedmiot:** Bezpieczeństwo CI/CD / Zaawansowane Środowiska Chmurowe i Konteneryzacja
-**Temat:** 3 – System zbierania metryk i monitoringu (Prometheus + Grafana + własny eksporter)
-**Data weryfikacji:** 2026-10-31 (klaster Minikube + GitHub Actions)
+**Temat:** 3 – System zbierania metryk i monitoringu (Prometheus + Grafana + własny eksporter w Pythonie)
+**Data wykonania zrzutów i testów:** 2026-11-05 (Minikube v1.35 + GitHub Actions)
 
 ## Linki do projektu (repozytorium publiczne)
 
 | Zasób | Adres |
 | :--- | :--- |
-| Repozytorium (kod, manifesty, dokumentacja) | https://github.com/Shengan01/Inference-Server |
+| **B. Repozytorium z manifestami** | https://github.com/Shengan01/Inference-Server |
+| Manifesty Kubernetes (`base`, `overlays`, `addons`, `gitops`, `tests`, `examples`) | https://github.com/Shengan01/Inference-Server/tree/main/k8s |
+| README repozytorium | https://github.com/Shengan01/Inference-Server/blob/main/README.md |
 | GitHub Actions (potok CI/CD, wszystkie przebiegi) | https://github.com/Shengan01/Inference-Server/actions |
 | Definicja potoku | https://github.com/Shengan01/Inference-Server/blob/main/.github/workflows/ci-cd.yaml |
 | Przykładowy przebieg z raportem testów (artefakt `test-report`) | https://github.com/Shengan01/Inference-Server/actions/runs/41239646305 |
-| Historia zmian (commity) | https://github.com/Shengan01/Inference-Server/commits/main |
-| Manifesty Kubernetes (`base`, `overlays`, `addons`, `gitops`) | https://github.com/Shengan01/Inference-Server/tree/main/k8s |
 | Obraz kontenera (GitHub Container Registry) | https://github.com/Shengan01/Inference-Server/pkgs/container/mcp-agent |
 | Instrukcja uruchomienia i testów | https://github.com/Shengan01/Inference-Server/blob/main/docs/INSTRUKCJA_URUCHOMIENIA_I_TESTOW.md |
 
-
-Projekt dotyczy zarządzania klastrem Kubernetes: wdrożenia, bezpieczeństwa, obserwowalności, CI/CD i GitOps. Serwowany model (mock Triton) jest tu tylko obciążeniem generującym metryki.
+**Zawartość sprawozdania.** Część **A** (rozdz. 1–3): potwierdzenie wdrożenia w klastrze (polecenia + zrzuty), prezentacja testów z Zadania 2 (cel, polecenia, zrzuty, wyniki) oraz komentarz do funkcjonalności. Część **B** (rozdz. 4): link do repozytorium z manifestami i opis jego zawartości. Zrzuty z terminala przedstawiają rzeczywisty wynik poleceń uruchomionych na klastrze (generowane skryptem `scripts/capture_evidence.py`), a zrzuty interfejsów (Prometheus, Grafana, Alertmanager, GitHub Actions) są zrzutami z przeglądarki.
 
 ---
 
-## 1. Zakres projektu i zgodność z wymaganiami tematu 3
+# Część A
 
-| Wymaganie | Realizacja | Gdzie w repozytorium |
-| :--- | :--- | :--- |
-| Prometheus jako StatefulSet | StatefulSet z `volumeClaimTemplates` (PVC 2Gi), retencja 15 dni | `k8s/base/prometheus/statefulset.yaml` |
-| Grafana jako Deployment | Deployment z PVC 1Gi, provisioning źródła danych i dashboardu z ConfigMap, serwowana pod `/grafana` | `k8s/base/grafana/` |
-| Własne dashboardy | *Autonomous Inference Cluster* (9 paneli) | `grafana/dashboards/inference-cluster.json` |
-| Własne alerty | 4 reguły (`InferenceServerDown`, `HighInferenceLatency`, `HighInferenceQueueDepth`, `GPUMemorySaturation`) + Alertmanager | `k8s/base/prometheus/alerting-rules.yaml`, `k8s/base/alertmanager/` |
-| ServiceMonitor | 2 ServiceMonitory (`triton`, `mcp-agent-config`) | `k8s/addons/operator-stack/servicemonitors.yaml` |
-| RBAC dla Prometheusa | `ServiceAccount` + `ClusterRole` tylko do odczytu + binding | `k8s/base/rbac.yaml` |
-| Helm / `kube-prometheus-stack` | chart 58.2.2 z własnymi wartościami, wdrażany przez ArgoCD | `k8s/addons/operator-stack/helm-values.yaml`, `k8s/gitops/argocd-application-operator.yaml` |
-| Własny eksporter w Pythonie | `mcp_agent` udostępnia `/metrics/config` (parametry silnika) i `/reconfigure` | `mcp_agent/server.py` |
-| Wskazówki z laboratoriów | | |
-| – CI/CD | GitHub Actions: lint, walidacja, Trivy, test na `kind`, obraz do `ghcr.io`, podbicie tagu w Git | `.github/workflows/ci-cd.yaml` |
-| – Ingress / gateway | NGINX Ingress, TLS, host `inference.local`, ścieżki `/grafana`, `/v2`, `/mcp` | `k8s/base/ingress/ingress.yaml` |
-| – Frontend (wykresy) | Grafana | `https://inference.local/grafana/` |
-| – Dostęp z zewnątrz / LoadBalancer | Ingress dostępny pod `minikube ip` (NodePort); w chmurze kontroler dostaje LoadBalancer | rozdz. 6 |
-| Zadanie 4 (opcjonalne): GitOps | 3 aplikacje ArgoCD (rdzeń, chart Helm, zasoby operatora) | `k8s/gitops/` |
+## 1. Potwierdzenie wdrożenia w klastrze Kubernetes
 
-## 2. Architektura
+**Środowisko:** jednowęzłowy klaster Minikube (sterownik Docker, Kubernetes v1.35), namespace `inference-monitoring`. System wdrożono dwiema równoważnymi ścieżkami: skryptem lokalnym oraz GitOps (ArgoCD synchronizuje klaster z repozytorium).
 
-**Architektura klastra** (Architecture of the cluster):
+```bash
+./scripts/deploy_minikube.sh cpu-demo                      # wdrożenie lokalne (Kustomize, overlay local-cpu)
+kubectl apply -f k8s/gitops/argocd-application.yaml        # wdrożenie GitOps (overlay cpu-demo z gałęzi main)
+```
+
+### 1.1. Mapa wymaganych obiektów
+
+| Obiekt | Konfiguracja w projekcie | Manifest | Zrzut |
+| :--- | :--- | :--- | :---: |
+| **StatefulSet** | `prometheus`: stała tożsamość, `volumeClaimTemplates` (2Gi), retencja 15 dni, probes, `securityContext` | `k8s/base/prometheus/statefulset.yaml` | 1.3 |
+| **Deployment** | `grafana`, `alertmanager`, `mcp-agent` (eksporter), `triton-server` (mock); probes, strategia `Recreate` dla Grafany (PVC RWO) | `k8s/base/*/deployment.yaml`, `k8s/overlays/cpu-demo/` | 1.3 |
+| **Service** | 5 × `ClusterIP` (Prometheus, Alertmanager, Grafana, Triton, MCP Agent), nazwane porty | `k8s/base/*/service.yaml` | 1.4 |
+| **Ingress** | NGINX, TLS, host `inference.local`; ścieżki `/grafana`, `/v2`, `/mcp` (rewrite) | `k8s/base/ingress/ingress.yaml` | 1.4 |
+| **PVC** | `prometheus-storage-prometheus-0` 2Gi (z szablonu StatefulSet), `grafana-storage` 1Gi | `k8s/base/grafana/pvc.yaml`, StatefulSet | 1.5 |
+| **ConfigMap** | konfiguracja Prometheusa i Alertmanagera, reguły alertów, datasource i dashboard Grafany, konfiguracja modelu | `k8s/base/*/configmap*.yaml` | 1.6 |
+| **Secret** | `grafana-secret` (Opaque), `inference-tls` (`kubernetes.io/tls`); tworzone skryptem, bez wartości w Git; wzór w repozytorium | `scripts/bootstrap_secrets.sh`, `k8s/examples/secrets.example.yaml` | 1.6 |
+| **NetworkPolicy** | `default-deny-all` + 6 reguł dla każdej pary komunikujących się usług | `k8s/base/network-policy.yaml` | 1.7 |
+| **Requests i limits** | jawne `requests` i `limits` CPU/pamięć w każdym kontenerze (także init-container) | manifesty workloadów | 1.8 |
+| **ResourceQuota** | 4 CPU / 8Gi (requests), 8 CPU / 16Gi (limits), 5 PVC, 15 podów | `k8s/base/resource-quota.yaml` | 1.8 |
+| **LimitRange** | domyślne requests/limits kontenera oraz zakres 500Mi–10Gi dla PVC | `k8s/base/resource-quota.yaml` | 1.8 |
+
+### 1.2. Klaster i namespace
+
+```bash
+kubectl get nodes -o wide && kubectl get namespaces
+```
+![Klaster i namespace](img/a01_cluster.png)
+
+### 1.3. Deployment i StatefulSet
+
+```bash
+kubectl -n inference-monitoring get deployments,statefulsets,pods
+```
+![Deployment, StatefulSet, Pod](img/a02_workloads.png)
+
+Komentarz: Prometheus działa jako StatefulSet (dane szeregów czasowych na trwałym wolumenie), pozostałe komponenty jako Deployment. Wszystkie pody są w stanie `Running 1/1`. Restarty wynikają z zatrzymania i ponownego uruchomienia Minikube przed wykonaniem zrzutów.
+
+### 1.4. Service i Ingress
+
+```bash
+kubectl -n inference-monitoring get services,ingress
+IP=$(minikube ip); curl -sk --resolve inference.local:443:$IP https://inference.local/grafana/api/health
+```
+![Service i Ingress](img/a03_services_ingress.png)
+
+Dostęp zewnętrzny przez Ingress (TLS, kody odpowiedzi i przekierowanie HTTP → HTTPS):
+
+![Dostęp przez Ingress](img/a10_ingress_access.png)
+
+### 1.5. PersistentVolumeClaim
+
+```bash
+kubectl -n inference-monitoring get pvc && kubectl get pv
+```
+![PVC i PV](img/a04_storage.png)
+
+### 1.6. ConfigMap i Secret
+
+```bash
+kubectl -n inference-monitoring get configmaps,secrets
+```
+![ConfigMap i Secret](img/a05_config_secrets.png)
+
+Komentarz: wartości sekretów celowo nie są pokazywane ani przechowywane w Git. `grafana-secret` zawiera losowe hasło administratora, `inference-tls` certyfikat self-signed dla `inference.local`; oba tworzy `scripts/bootstrap_secrets.sh`. Wzór obiektów (z wartościami zastępczymi) znajduje się w `k8s/examples/secrets.example.yaml`.
+
+### 1.7. NetworkPolicy
+
+```bash
+kubectl -n inference-monitoring get networkpolicies
+```
+![NetworkPolicy](img/a06_networkpolicy.png)
+
+Komentarz: `default-deny-all` blokuje cały ruch w namespace, a pozostałe polityki otwierają wyłącznie wymagane połączenia (Prometheus → Triton/agent/Alertmanager, Grafana → Prometheus, agent → Prometheus/Triton, ruch z Ingress do usług, DNS). Polityki `loadgen-*` pochodzą z Jobu testowego (rozdz. 2).
+
+### 1.8. Requests, limits, ResourceQuota i LimitRange
+
+```bash
+kubectl -n inference-monitoring get pods -o custom-columns=POD:.metadata.name,CONTAINER:.spec.containers[*].name,CPU_REQ:.spec.containers[*].resources.requests.cpu,CPU_LIM:.spec.containers[*].resources.limits.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory,MEM_LIM:.spec.containers[*].resources.limits.memory
+kubectl -n inference-monitoring describe resourcequota inference-monitoring-quota
+kubectl -n inference-monitoring describe limitrange inference-monitoring-limits
+```
+![Requests i limits](img/a09_requests_limits.png)
+
+![ResourceQuota](img/a07_resourcequota.png)
+
+![LimitRange](img/a08_limitrange.png)
+
+### 1.9. GitOps i profil operatora
+
+```bash
+kubectl -n argocd get applications && kubectl -n monitoring get pods
+```
+![ArgoCD i profil operatora](img/a11_gitops.png)
+
+### 1.10. Dodatkowe obiekty i zasoby (punkty dodatkowe)
+
+| Obiekt | Uzasadnienie |
+| :--- | :--- |
+| `ServiceAccount` ×5, `ClusterRole` + `ClusterRoleBinding` | RBAC najmniejszych uprawnień: osobne konta dla każdego komponentu, Prometheus tylko do odczytu (bez dostępu do Secrets) |
+| `Namespace` z etykietami Pod Security | `enforce: baseline`, `audit`/`warn: restricted` |
+| `securityContext` + probes | `runAsNonRoot`, `drop: ALL`, `seccomp: RuntimeDefault`, `readinessProbe`/`livenessProbe` w każdym komponencie |
+| `Job` + `NetworkPolicy` testowe | generator obciążenia działa wewnątrz klastra (bez narzutu `port-forward`) |
+| `ServiceMonitor` ×2, `PrometheusRule` (CRD) | profil Prometheus Operator, wykrywanie celów przez zasoby Kubernetes |
+| Helm (`kube-prometheus-stack`) | gotowy stos operatora wdrażany z własnymi wartościami |
+| ArgoCD `Application` ×3 | GitOps: automatyczna synchronizacja, `prune`, `selfHeal` |
+| Kustomize (`base`, 5 overlayów) | jedna baza, profile `cpu-demo`/`gpu`/`local-*` |
+| GitHub Actions + Trivy + kubeconform | walidacja i skan manifestów oraz obrazu, test na `kind`, automatyczne wdrożenie obrazu |
+
+## 2. Prezentacja testów
+
+Testy odpowiadają procedurze zaplanowanej w Zadaniu 2 (`docs/ZADANIE_2_OPIS_I_ARCHITEKTURA.md`, rozdz. 3, testy 1–8). Poniżej: cel (lub odniesienie), użyte polecenia, zrzut i wynik.
+
+### Test 1: integralność wdrożenia i quota
+**Cel:** wszystkie obciążenia działają, PVC są `Bound`, zużycie mieści się w quota (Zadanie 2, Test 1).
+```bash
+kubectl -n inference-monitoring get pods,pvc
+kubectl -n inference-monitoring describe resourcequota inference-monitoring-quota | tail -9
+```
+![Test 1](img/t01_deployment_quota.png)
+**Wynik: PASS.** 5 podów `Running 1/1`, oba PVC `Bound`, zużycie quota poniżej limitów.
+
+### Test 2: audyt bezpieczeństwa (RBAC, NetworkPolicy, non-root)
+**Cel:** uprawnienia najmniejszego zakresu i bezpieczne kontenery (Zadanie 2, Test 2).
+```bash
+./scripts/verify_security.sh
+```
+![Test 2](img/t02_security_audit.png)
+**Wynik: PASS.** `prometheus-sa` może czytać pody (`yes`), nie może ich usuwać (`no`) ani czytać Secrets (`no`); wszystkie pody mają `NonRoot: true`; polityki sieciowe, ResourceQuota i LimitRange są aktywne.
+
+### Test 3: potok metryk i wizualizacji
+**Cel:** Prometheus zbiera metryki z Tritona i eksportera, Alertmanager jest podłączony, Grafana ma wczytane źródło danych i dashboard (Zadanie 2, Test 3).
+```bash
+curl -s localhost:9090/api/v1/targets | python3 -c "..."      # cele i ich stan
+curl -s localhost:9090/api/v1/alertmanagers
+```
+![Test 3, cele z linii poleceń](img/t03_targets_cli.png)
+Interfejs Prometheusa (Status → Targets):
+![Test 3, Prometheus UI](img/t03_prometheus_targets.png)
+**Wynik: PASS.** Cele `prometheus`, `triton` i `mcp_agent_config` mają stan `up`, Alertmanager jest podłączony.
+
+### Testy 4 i 5: skok obciążenia, alert, hot-reload i powrót do normy
+**Cel:** pod wpływem obciążenia rośnie opóźnienie i uruchamia się alert; agent SRE zmienia `max_num_seqs` z 32 na 512 bez przestoju, a opóźnienie wraca do wartości bazowej (Zadanie 2, Testy 4 i 5). Test działa jako Job w klastrze.
+```bash
+LOADGEN_IMAGE=<obraz mcp-agent> ./scripts/run_in_cluster_test.sh
+```
+![Testy 4 i 5, wynik](img/t45_load_test.png)
+
+| Faza | Żądań/s | Wysłane | Pomyślne | Opóźnienie serwera [ms] |
+| :--- | :---: | :---: | :---: | :---: |
+| 1. CALM | 20 | 200 | 200 | 15.8 |
+| 2. STORM | 400 | 6000 | 6000 | **202.1** |
+| 3. RESOLUTION (po hot-reload) | 400 | 6000 | 6000 | **14.2** |
+
+Dashboard Grafany po teście (dwa kolejne przebiegi testu: skok ruchu i opóźnienia, następnie powrót do normy; `max_num_seqs` = 512 po hot-reload):
+![Dashboard Grafany](img/t45_grafana_dashboard.png)
+Alerty w Prometheusie i w Alertmanagerze:
+![Alerty w Prometheusie](img/t45_prometheus_alerts.png)
+![Alertmanager](img/t45_alertmanager.png)
+**Wynik: PASS** (wszystkie 7 kryteriów). Skuteczność żądań 100%, opóźnienie serwera rośnie w burzy ponad 12.8× względem bazowego i wraca do poziomu bazowego po hot-reload; aktywny alert: HighInferenceQueueDepth. Opóźnienie liczone jest z liczników Prometheusa (`Δ nv_inference_request_duration_us / Δ nv_inference_request_success`), czyli tak samo jak w regule alertu.
+
+### Test 6: GitOps, self-heal ArgoCD
+**Cel:** ręczne zmiany w klastrze są cofane do stanu z repozytorium (Zadanie 2, Test 6).
+```bash
+kubectl -n inference-monitoring delete svc alertmanager-service
+kubectl -n inference-monitoring scale deploy/grafana --replicas=0
+sleep 25; kubectl -n inference-monitoring get svc alertmanager-service; kubectl -n inference-monitoring get deploy grafana
+kubectl -n argocd get application inference-monitoring-app
+```
+![Test 6](img/t06_gitops_selfheal.png)
+**Wynik: PASS.** Usunięty Service i wyzerowane repliki Grafany zostały przywrócone przez ArgoCD, aplikacja ma stan `Synced`.
+
+### Test 7: profil Prometheus Operator (ServiceMonitor, Helm)
+**Cel:** Prometheus z chartu `kube-prometheus-stack` wykrywa cele przez ServiceMonitory i ładuje reguły z `PrometheusRule` (Zadanie 2, Test 7).
+```bash
+kubectl -n monitoring port-forward svc/kps-prometheus 19090:9090 &
+curl -s localhost:19090/api/v1/targets | python3 -c "..."      # cele inference-monitoring
+curl -s localhost:19090/api/v1/rules | python3 -c "..."        # grupa inference_alerts
+```
+![Test 7](img/t07_operator_targets.png)
+**Wynik: PASS.** Oba ServiceMonitory (`triton`, `mcp-agent-config`) mają stan `up`, grupa `inference_alerts` zawiera 4 reguły.
+
+### Test 8: potok CI/CD (GitHub Actions)
+**Cel:** każdy push uruchamia walidację, skan, test w klastrze, zbudowanie obrazu i aktualizację wdrożenia (Zadanie 2, Test 8).
+```text
+https://github.com/Shengan01/Inference-Server/actions
+```
+![Test 8, lista przebiegów](img/t08_github_actions.png)
+![Test 8, szczegóły przebiegu](img/t08_github_actions_run.png)
+**Wynik: PASS.** Przebiegi na gałęzi `main` kończą się sukcesem (5 jobów: walidacja manifestów, skan bezpieczeństwa, test na `kind`, zbudowanie i skan obrazu, aktualizacja tagu w Git).
+
+## 3. Komentarz do funkcjonalności (zakładana i osiągnięta)
+
+**Założenia.** Zbudować w Kubernetes system obserwowalności (Prometheus + Grafana + własny eksporter) dla serwera inferencji, z alertami, bezpiecznym dostępem, automatyzacją CI/CD i GitOps. Model nie jest przedmiotem oceny, jest obciążeniem generującym metryki.
+
+**Osiągnięte.** Wszystkie wymagane obiekty (rozdz. 1.1) są skonfigurowane i działają, a testy 1–8 kończą się wynikiem pozytywnym. System reaguje na przeciążenie (alert), a agent SRE przywraca opóźnienie do wartości bazowej bez przestoju. Dodatkowo wdrożono profil Prometheus Operator, GitOps i potok CI/CD z testem na `kind`.
+
+**Ograniczenia (uczciwie):**
+* Profil `cpu-demo` używa **mocka Tritona**; profil `gpu` (prawdziwy Triton) renderuje się poprawnie, ale nie był uruchamiany (brak GPU). Wartości bezwzględne opóźnień zależą od modelu mocka i mocy maszyny; istotny jest kierunek zmiany i powrót do normy.
+* Opóźnienie po stronie klienta (kilkaset ms przy 400 równoczesnych żądaniach) zależy od mocy generatora i nie opisuje usługi, dlatego w wynikach podano opóźnienie z Prometheusa.
+* Alertmanager nie ma skonfigurowanego odbiorcy (e-mail/webhook); alerty są widoczne w jego interfejsie. Reguła `HighInferenceLatency` nie jest wymagana przez żaden test; w teście aktywny jest `HighInferenceQueueDepth`.
+* TLS jest self-signed, a sekrety tworzone są skryptem (poza Git). W środowisku produkcyjnym należy użyć cert-manager i Sealed/External Secrets.
+* W Minikube kontroler Ingress jest usługą `NodePort` pod `minikube ip` (w chmurze otrzymałby adres LoadBalancera).
+* Podczas wykonywania zrzutów wykryto i poprawiono niezgodność mocka z prawdziwym Triton (`nv_gpu_utilization` jako ułamek 0–1 oraz brakująca metryka `nv_inference_pending_request_count`), która powodowała błędne wartości na dashboardzie.
+
+---
+
+# Część B
+
+## 4. Repozytorium z manifestami
+
+**Repozytorium:** https://github.com/Shengan01/Inference-Server (publiczne, gałąź `main`)
+
+Plik `README.md` w repozytorium opisuje architekturę, szybki start, strukturę katalogów, metryki i alerty oraz zawiera spis dokumentacji (w tym instrukcję uruchomienia i testów oraz wersje PDF w `docs/pdf/`).
+
+| Ścieżka | Zawartość |
+| :--- | :--- |
+| `k8s/base/` | wspólne manifesty: namespace, RBAC, ResourceQuota/LimitRange, NetworkPolicy, Prometheus (StatefulSet), Grafana, Alertmanager, Ingress, agent |
+| `k8s/overlays/` | profile Kustomize: `cpu-demo`, `gpu`, `local-cpu`, `local-gpu` |
+| `k8s/addons/operator-stack/` | ServiceMonitory, PrometheusRule, NetworkPolicy i wartości Helm (profil operatora) |
+| `k8s/gitops/` | aplikacje ArgoCD |
+| `k8s/tests/`, `k8s/examples/` | Job generatora obciążenia z NetworkPolicy; wzorcowe manifesty Secret |
+| `mcp_agent/` | własny eksporter metryk i kontroler (Python, FastMCP + FastAPI) |
+| `scripts/` | wdrożenie, sekrety, audyt bezpieczeństwa, test w klastrze, zrzuty, PDF |
+| `.github/workflows/ci-cd.yaml` | potok CI/CD |
+| `docs/` | dokumentacja i sprawozdania (Zadanie 2 i 3, dokumentacja techniczna, instrukcja) oraz `docs/pdf/` |
+
+Odtworzenie wdrożenia (szczegóły w instrukcji):
+```bash
+git clone https://github.com/Shengan01/Inference-Server.git && cd Inference-Server
+./scripts/deploy_minikube.sh cpu-demo
+LOADGEN_IMAGE=mcp-agent:local ./scripts/run_in_cluster_test.sh
+```
+
+---
+
+## Załącznik: architektura systemu
+
+**Architektura klastra:**
 
 ```mermaid
 flowchart LR
@@ -127,7 +348,7 @@ flowchart LR
     style Operator fill:#dcfce7,stroke:#4ade80,color:#111111
 ```
 
-**Dostarczanie: CI/CD i GitOps** (Delivery pipeline):
+**Dostarczanie: CI/CD i GitOps:**
 
 ```mermaid
 flowchart LR
@@ -167,63 +388,3 @@ flowchart LR
 
     style GHA fill:#f3e8ff,stroke:#c084fc,color:#111111
 ```
-
-Opis przepływów: ruch zewnętrzny trafia przez Ingress (TLS) do Grafany, Tritona lub MCP Agenta. Prometheus zbiera metryki z Tritona (`:8002/metrics`) i z eksportera agenta (`:5000/metrics/config`), zapisuje je na PVC, ocenia reguły i wysyła aktywne alerty do Alertmanagera. Agent odpytuje Prometheusa i przeładowuje konfigurację Tritona (hot-reload). Dostarczanie: GitHub Actions testuje i buduje obraz, zapisuje nowy tag w Git, a ArgoCD synchronizuje klaster. Profil operatora (`monitoring`) jest opcjonalny.
-
-## 3. Implementacja – najważniejsze decyzje
-
-* **Podział StatefulSet / Deployment:** baza TSDB Prometheusa jako StatefulSet ze stałym wolumenem; Grafana, Alertmanager, agent i Triton jako Deployment.
-* **Konfiguracja deklaratywna:** datasource, dashboard, reguły alertów i konfiguracje w ConfigMap; **sekrety poza Git** (`scripts/bootstrap_secrets.sh` tworzy losowe hasło Grafany i certyfikat TLS).
-* **Bezpieczeństwo:** `default-deny-all` + reguły dla każdej pary komunikujących się usług, wszystkie kontenery `runAsNonRoot`, `allowPrivilegeEscalation: false`, `drop: ALL`, `seccomp: RuntimeDefault`, ResourceQuota i LimitRange, RBAC najmniejszych uprawnień. Obraz agenta działa jako UID 10001, bez `setuptools` i `wheel` (usunięte po skanie Trivy).
-* **Profile uruchomieniowe:** `cpu-demo` (mock Tritona) i `gpu` (prawdziwy Triton, zasób `nvidia.com/gpu`); overlaye `local-*` używają obrazu zbudowanego lokalnie.
-* **CI/CD:** pięć jobów (rozdz. 7 instrukcji); każdy etap jest bramką, a porażka testu w klastrze przerywa pipeline.
-* **GitOps:** `automated` sync z `prune` i `selfHeal`; tag obrazu aktualizuje job `gitops-bump`.
-
-## 4. Procedura testowa
-
-Opis każdego testu i kryteria PASS znajdują się w `docs/ZADANIE_2_OPIS_I_ARCHITEKTURA.md` (rozdz. 3, testy 1–8); sposób uruchomienia w `docs/INSTRUKCJA_URUCHOMIENIA_I_TESTOW.md`.
-
-## 5. Sprawozdanie z realizacji testów
-
-Środowisko: Minikube (Docker, Kubernetes v1.35) i runner GitHub Actions z klastrem `kind`. Obraz agenta: `ghcr.io/shengan01/mcp-agent:22262ec…`.
-
-| # | Test | Wynik | Dowód |
-| :-: | :--- | :-: | :--- |
-| 1 | Integralność wdrożenia i quota | **PASS** | 5 podów `Running` (`prometheus-0`, `grafana`, `alertmanager`, `mcp-agent`, `triton-server`); PVC `prometheus-storage-prometheus-0` (2Gi) i `grafana-storage` (1Gi) `Bound`; quota: pody 5/15, requests.cpu 550m/4, requests.memory 768Mi/8Gi, PVC 2/5 |
-| 2 | Audyt bezpieczeństwa | **PASS** | `prometheus-sa`: odczyt podów `yes`, usuwanie podów `no`, odczyt Secrets `no`; wszystkie pody `NonRoot: true` (UID 472, 10001, 65534); 7 NetworkPolicy z profilu podstawowego aktywnych (+3 pomocnicze: 2 dla Jobu testowego, 1 dla profilu operatora); brak jawnego hasła w manifestach |
-| 3 | Potok metryk i wizualizacji | **PASS** | cele Prometheusa `prometheus`, `triton`, `mcp_agent_config` = `up`; Alertmanager podłączony (1); Grafana: źródło `Prometheus` (`http://prometheus-service:9090`) i dashboard *Autonomous Inference Cluster* załadowane automatycznie; `https://inference.local/grafana/api/health`, `/v2/health/ready`, `/mcp/health` = 200; `http://` przekierowuje na HTTPS (308) |
-| 4 | Skok obciążenia i alert | **PASS** | opóźnienie serwera 15,7 → 170,6 ms (Minikube) i 15,8 → 65,2 ms (CI); aktywny alert `HighInferenceQueueDepth` |
-| 5 | Hot-reload i powrót do normy | **PASS** | `/reconfigure` zwraca 200 (`max_num_seqs`: 512, `hot_reload: true`); opóźnienie serwera po zmianie 14,2 ms (Minikube) i 13,4 ms (CI); 100% żądań z kodem 200 |
-| 6 | GitOps: synchronizacja i self-heal | **PASS** | aplikacja `Synced/Healthy`, pod agenta z obrazem `ghcr.io/…`; po usunięciu `alertmanager-service` i wyzerowaniu replik Grafany ArgoCD przywrócił oba w kilka sekund |
-| 7 | Profil operatora | **PASS** | `serviceMonitor/inference-monitoring/triton/0` i `…/mcp-agent-config/0` = `up`; grupa `inference_alerts` (4 reguły) załadowana; Alertmanager z chartu aktywny |
-| 8 | Potok CI/CD | **PASS** | ostatni przebieg ([run 41242149834](https://github.com/Shengan01/Inference-Server/actions/runs/41242149834)): 5/5 jobów zielone |
-
-**Weryfikacja instrukcji od zera.** Dokument `INSTRUKCJA_URUCHOMIENIA_I_TESTOW.md` został wykonany w całości na czystym klastrze Minikube (osobny profil, 2026-11-01): wdrożenie skryptem w ok. 1 minutę, audyt bezpieczeństwa, test obciążeniowy (opóźnienie serwera 15,7 → 213,6 → 14,6 ms, dwa kolejne przebiegi PASS), instalacja ArgoCD ze self-heal, profil operatora (oba ServiceMonitory `up`) oraz sprzątanie.
-
-### 5.1. Wyniki testów 4 i 5 (procedura obciążeniowa)
-
-Źródło: raport z przebiegu CI ([run 41239646305](https://github.com/Shengan01/Inference-Server/actions/runs/41239646305), artefakt `test-report`) oraz ten sam test uruchomiony na Minikube.
-
-| Faza | Żądań/s | Wysłane | Pomyślne | Opóźnienie serwera CI (ms) | Opóźnienie serwera Minikube (ms) |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| 1. THE CALM | 20 | 200 | 100% | 15,8 | 15,7 |
-| 2. THE STORM | 400 | 3600 (CI) / 6000 (Minikube) | 100% | **65,2** | **170,6** |
-| 3. THE RESOLUTION | 400 | 3600 (CI) / 6000 (Minikube) | 100% | **13,4** | **14,2** |
-
-Wszystkie 7 kryteriów PASS w obu uruchomieniach: skuteczność ≥ 95% (fazy 1 i 3), `/reconfigure` = 200, cele Prometheusa `up` i reguły załadowane, burza podnosi opóźnienie serwera ponad 2× wartość bazową i powyżej 25 ms, po hot-reload opóźnienie spada poniżej 30 ms i poniżej połowy wartości z burzy.
-
-**Jak czytać wyniki.** Opóźnienie serwera liczone jest z liczników Prometheusa (`Δ nv_inference_request_duration_us / Δ nv_inference_request_success`), czyli tak samo jak w regule alertu. Opóźnienie mierzone po stronie klienta (kilkaset ms przy 400 równoczesnych żądaniach) zależy głównie od mocy procesu generatora i nie opisuje usługi. Wartości bezwzględne zależą od mocy maszyny i modelu opóźnień mocka, dlatego CI i Minikube różnią się w fazie burzy; istotny jest kierunek zmiany i powrót do wartości bazowej.
-
-## 6. Ograniczenia i uwagi
-
-* Profil `cpu-demo` używa **mocka Tritona**; profil `gpu` (prawdziwy Triton + GPU) jest przygotowany i renderuje się poprawnie, ale nie był uruchamiany (brak GPU).
-* Podczas testu zaobserwowano alert `HighInferenceQueueDepth`; `HighInferenceLatency` nie został zaobserwowany jako aktywny w raporcie (zależy od okna `rate(...[15s])`).
-* Alertmanager nie ma skonfigurowanego odbiorcy (webhook/e-mail); alerty są widoczne w jego interfejsie i w Prometheusie.
-* TLS jest self-signed; w produkcji należy użyć cert-manager. Sekrety tworzone są skryptem, nie przez Sealed/External Secrets.
-* W Minikube kontroler Ingress jest usługą NodePort pod `minikube ip`. Wariant z LoadBalancerem (`minikube tunnel`) nie był testowany.
-* `ClusterRole` Prometheusa jest przygotowana pod Service Discovery, a profil standardowy używa statycznych celów scrapowania; wykrywanie przez ServiceMonitor działa w profilu operatora.
-* Własny dashboard jest dostarczany w profilu standardowym; Grafana z chartu operatora ma domyślne dashboardy Kubernetes.
-
-## 7. Wnioski
-
-System realizuje wszystkie elementy tematu 3: Prometheus jako StatefulSet z trwałym wolumenem, Grafana z automatycznie ładowanym dashboardem, własny eksporter, alerty z Alertmanagerem, RBAC, ServiceMonitory i chart Helm. Dodatkowo zapewnia dostęp przez Ingress z TLS, zabezpieczenia sieciowe i kontenerowe oraz zautomatyzowany potok CI/CD zintegrowany z GitOps. Wszystkie testy zakończyły się wynikiem pozytywnym, a procedurę testową można powtórzyć jednym poleceniem (`scripts/run_in_cluster_test.sh`) lub zobaczyć w artefaktach GitHub Actions.
