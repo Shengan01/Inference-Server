@@ -26,3 +26,9 @@ spec:
         cpu: "100m"
         memory: "256Mi"
       type: Container
+    # Storage requested by a single PVC must stay within sane bounds
+    - type: PersistentVolumeClaim
+      min:
+        storage: 500Mi
+      max:
+        storage: 10Gi

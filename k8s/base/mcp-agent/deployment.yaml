@@ -29,6 +29,13 @@ spec:
         - name: init-config
           image: python:3.11-slim
           command: ["sh", "-c", "mkdir -p /model_repository/finance-qwen && cp /config-template/config.pbtxt /model_repository/finance-qwen/config.pbtxt && chmod 666 /model_repository/finance-qwen/config.pbtxt"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

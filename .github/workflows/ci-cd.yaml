@@ -58,7 +58,7 @@ jobs:
               -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
             echo "::endgroup::"
           done
-          kubeconform -summary -strict k8s/tests/
+          kubeconform -summary -strict k8s/tests/ k8s/examples/
 
   # ========================================================
   # STAGE 2: SECURITY SCANNING OF MANIFESTS (TRIVY)
