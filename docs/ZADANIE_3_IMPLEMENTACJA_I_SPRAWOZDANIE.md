@@ -121,7 +121,7 @@ kubectl -n argocd get applications && kubectl -n monitoring get pods
 ```
 ![ArgoCD i profil operatora](img/a11_gitops.png)
 
-### 1.10. Dodatkowe obiekty i zasoby (punkty dodatkowe)
+### 1.10. Dodatkowe obiekty i zasoby
 
 | Obiekt | Uzasadnienie |
 | :--- | :--- |
@@ -146,7 +146,7 @@ kubectl -n inference-monitoring get pods,pvc
 kubectl -n inference-monitoring describe resourcequota inference-monitoring-quota | tail -9
 ```
 ![Test 1](img/t01_deployment_quota.png)
-**Wynik: PASS.** 5 podów `Running 1/1`, oba PVC `Bound`, zużycie quota poniżej limitów.
+**Wynik:** 5 podów `Running 1/1`, oba PVC `Bound`, zużycie quota poniżej limitów.
 
 ### Test 2: audyt bezpieczeństwa (RBAC, NetworkPolicy, non-root)
 **Cel:** uprawnienia najmniejszego zakresu i bezpieczne kontenery (Zadanie 2, Test 2).
@@ -154,7 +154,7 @@ kubectl -n inference-monitoring describe resourcequota inference-monitoring-quot
 ./scripts/verify_security.sh
 ```
 ![Test 2](img/t02_security_audit.png)
-**Wynik: PASS.** `prometheus-sa` może czytać pody (`yes`), nie może ich usuwać (`no`) ani czytać Secrets (`no`); wszystkie pody mają `NonRoot: true`; polityki sieciowe, ResourceQuota i LimitRange są aktywne.
+**Wynik:** `prometheus-sa` może czytać pody (`yes`), nie może ich usuwać (`no`) ani czytać Secrets (`no`); wszystkie pody mają `NonRoot: true`; polityki sieciowe, ResourceQuota i LimitRange są aktywne.
 
 ### Test 3: potok metryk i wizualizacji
 **Cel:** Prometheus zbiera metryki z Tritona i eksportera, Alertmanager jest podłączony, Grafana ma wczytane źródło danych i dashboard (Zadanie 2, Test 3).
@@ -165,7 +165,7 @@ curl -s localhost:9090/api/v1/alertmanagers
 ![Test 3, cele z linii poleceń](img/t03_targets_cli.png)
 Interfejs Prometheusa (Status → Targets):
 ![Test 3, Prometheus UI](img/t03_prometheus_targets.png)
-**Wynik: PASS.** Cele `prometheus`, `triton` i `mcp_agent_config` mają stan `up`, Alertmanager jest podłączony.
+**Wynik:** Cele `prometheus`, `triton` i `mcp_agent_config` mają stan `up`, Alertmanager jest podłączony.
 
 ### Testy 4 i 5: skok obciążenia, alert, hot-reload i powrót do normy
 **Cel:** pod wpływem obciążenia rośnie opóźnienie i uruchamia się alert; agent SRE zmienia `max_num_seqs` z 32 na 512 bez przestoju, a opóźnienie wraca do wartości bazowej (Zadanie 2, Testy 4 i 5). Test działa jako Job w klastrze.
@@ -185,7 +185,7 @@ Dashboard Grafany po teście (dwa kolejne przebiegi testu: skok ruchu i opóźni
 Alerty w Prometheusie i w Alertmanagerze:
 ![Alerty w Prometheusie](img/t45_prometheus_alerts.png)
 ![Alertmanager](img/t45_alertmanager.png)
-**Wynik: PASS** (wszystkie 7 kryteriów). Skuteczność żądań 100%, opóźnienie serwera rośnie w burzy ponad 12.8× względem bazowego i wraca do poziomu bazowego po hot-reload; aktywny alert: HighInferenceQueueDepth. Opóźnienie liczone jest z liczników Prometheusa (`Δ nv_inference_request_duration_us / Δ nv_inference_request_success`), czyli tak samo jak w regule alertu.
+**Wynik:** wszystkie 7 kryteriów spełnionych. Skuteczność żądań 100%, opóźnienie serwera rośnie w burzy ponad 12.8× względem bazowego i wraca do poziomu bazowego po hot-reload; aktywny alert: HighInferenceQueueDepth. Opóźnienie liczone jest z liczników Prometheusa (`Δ nv_inference_request_duration_us / Δ nv_inference_request_success`), czyli tak samo jak w regule alertu.
 
 ### Test 6: GitOps, self-heal ArgoCD
 **Cel:** ręczne zmiany w klastrze są cofane do stanu z repozytorium (Zadanie 2, Test 6).
@@ -196,7 +196,7 @@ sleep 25; kubectl -n inference-monitoring get svc alertmanager-service; kubectl 
 kubectl -n argocd get application inference-monitoring-app
 ```
 ![Test 6](img/t06_gitops_selfheal.png)
-**Wynik: PASS.** Usunięty Service i wyzerowane repliki Grafany zostały przywrócone przez ArgoCD, aplikacja ma stan `Synced`.
+**Wynik:** Usunięty Service i wyzerowane repliki Grafany zostały przywrócone przez ArgoCD, aplikacja ma stan `Synced`.
 
 ### Test 7: profil Prometheus Operator (ServiceMonitor, Helm)
 **Cel:** Prometheus z chartu `kube-prometheus-stack` wykrywa cele przez ServiceMonitory i ładuje reguły z `PrometheusRule` (Zadanie 2, Test 7).
@@ -206,7 +206,7 @@ curl -s localhost:19090/api/v1/targets | python3 -c "..."      # cele inference-
 curl -s localhost:19090/api/v1/rules | python3 -c "..."        # grupa inference_alerts
 ```
 ![Test 7](img/t07_operator_targets.png)
-**Wynik: PASS.** Oba ServiceMonitory (`triton`, `mcp-agent-config`) mają stan `up`, grupa `inference_alerts` zawiera 4 reguły.
+**Wynik:** Oba ServiceMonitory (`triton`, `mcp-agent-config`) mają stan `up`, grupa `inference_alerts` zawiera 4 reguły.
 
 ### Test 8: potok CI/CD (GitHub Actions)
 **Cel:** każdy push uruchamia walidację, skan, test w klastrze, zbudowanie obrazu i aktualizację wdrożenia (Zadanie 2, Test 8).
@@ -215,7 +215,7 @@ https://github.com/Shengan01/Inference-Server/actions
 ```
 ![Test 8, lista przebiegów](img/t08_github_actions.png)
 ![Test 8, szczegóły przebiegu](img/t08_github_actions_run.png)
-**Wynik: PASS.** Przebiegi na gałęzi `main` kończą się sukcesem (5 jobów: walidacja manifestów, skan bezpieczeństwa, test na `kind`, zbudowanie i skan obrazu, aktualizacja tagu w Git).
+**Wynik:** Przebiegi na gałęzi `main` kończą się sukcesem (5 jobów: walidacja manifestów, skan bezpieczeństwa, test na `kind`, zbudowanie i skan obrazu, aktualizacja tagu w Git).
 
 ## 3. Komentarz do funkcjonalności (zakładana i osiągnięta)
 
@@ -224,7 +224,7 @@ https://github.com/Shengan01/Inference-Server/actions
 **Osiągnięte.** Wszystkie wymagane obiekty (rozdz. 1.1) są skonfigurowane i działają, a testy 1–8 kończą się wynikiem pozytywnym. System reaguje na przeciążenie (alert), a agent SRE przywraca opóźnienie do wartości bazowej bez przestoju. Dodatkowo wdrożono profil Prometheus Operator, GitOps i potok CI/CD z testem na `kind`.
 
 **Ograniczenia (uczciwie):**
-* Profil `cpu-demo` używa **mocka Tritona**; profil `gpu` (prawdziwy Triton) renderuje się poprawnie, ale nie był uruchamiany (brak GPU). Wartości bezwzględne opóźnień zależą od modelu mocka i mocy maszyny; istotny jest kierunek zmiany i powrót do normy.
+* Wdrożenie i testy wykonano na profilu `cpu-demo`, w którym serwer inferencji jest **mockiem Tritona** (emuluje API i metryki; nie wykorzystuje GPU). Profil `gpu` (prawdziwy Triton z vLLM) nie był jeszcze uruchamiany. Wartości bezwzględne opóźnień zależą od modelu mocka i mocy maszyny; istotny jest kierunek zmiany i powrót do normy.
 * Opóźnienie po stronie klienta (kilkaset ms przy 400 równoczesnych żądaniach) zależy od mocy generatora i nie opisuje usługi, dlatego w wynikach podano opóźnienie z Prometheusa.
 * Alertmanager nie ma skonfigurowanego odbiorcy (e-mail/webhook); alerty są widoczne w jego interfejsie. Reguła `HighInferenceLatency` nie jest wymagana przez żaden test; w teście aktywny jest `HighInferenceQueueDepth`.
 * TLS jest self-signed, a sekrety tworzone są skryptem (poza Git). W środowisku produkcyjnym należy użyć cert-manager i Sealed/External Secrets.
