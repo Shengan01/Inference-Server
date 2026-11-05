@@ -25,9 +25,16 @@ TARGET_LATENCY_MS = 100  # Target latency to optimize around
 GPU_MEMORY_SAFE_THRESHOLD = 0.80  # Only reload if GPU memory below 80%
 RELOAD_RETRY_ATTEMPTS = 3
 RELOAD_RETRY_DELAY_SECONDS = 2
+# A real vLLM engine needs far more than 30 s to load; override with RELOAD_TIMEOUT_SECONDS.
+RELOAD_TIMEOUT_SECONDS = float(os.getenv("RELOAD_TIMEOUT_SECONDS", "30"))
 
 # Prometheus URL for GPU memory check (set via environment)
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+
+# Real Triton + vLLM reads engine arguments (max_num_seqs, gpu_memory_utilization) from
+# <model>/<version>/model.json, not from the parameters in config.pbtxt. When this path is set
+# and the file exists, the engine arguments are updated there as well.
+MODEL_JSON_PATH = os.getenv("MODEL_JSON_PATH", "")
 
 
 def calculate_optimal_seqs(
@@ -106,6 +113,18 @@ async def check_gpu_memory_safe() -> tuple[bool, float]:
         return True, -1  # Assume safe if can't check
 
 
+def _update_model_json(path: str, max_num_seqs: int, gpu_memory: Optional[float]) -> None:
+    """Update the vLLM engine arguments stored in model.json."""
+    import json
+    with open(path, "r") as f:
+        data = json.load(f)
+    data["max_num_seqs"] = int(max_num_seqs)
+    if gpu_memory is not None:
+        data["gpu_memory_utilization"] = float(gpu_memory)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=4)
+
+
 async def reconfigure_server_dynamic(
     target_seqs: int,
     config_path: str,
@@ -165,6 +184,17 @@ async def reconfigure_server_dynamic(
             "error": f"Failed to write config file: {e}"
         }
     
+    # Step 3b: vLLM engine arguments live in model.json (real Triton only)
+    if MODEL_JSON_PATH and os.path.exists(MODEL_JSON_PATH):
+        try:
+            _update_model_json(MODEL_JSON_PATH, target_seqs, gpu_memory)
+            logger.info(f"Updated vLLM engine arguments in {MODEL_JSON_PATH}")
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to update model.json: {e}"
+            }
+
     # Step 4: IMPROVEMENT #1 - Check GPU memory before hot reload
     is_safe, gpu_util = await check_gpu_memory_safe()
     
@@ -250,7 +280,7 @@ async def _trigger_reload(triton_url: str, model_name: str) -> Dict[str, Any]:
     """
     for attempt in range(RELOAD_RETRY_ATTEMPTS):
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=RELOAD_TIMEOUT_SECONDS) as client:
                 # First, unload the model
                 unload_url = f"{triton_url}/v2/repository/models/{model_name}/unload"
                 logger.info(f"Unloading model (attempt {attempt+1}/{RELOAD_RETRY_ATTEMPTS})...")

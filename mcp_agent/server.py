@@ -110,7 +110,9 @@ async def tool_reconfigure_server(strategy: str) -> dict:
     """Reconfigure the Triton inference server with a named strategy."""
     logger.info(f"MCP Tool called: reconfigure_server(strategy={strategy})")
     strategy_map = {
-        "aggressive": (512, 0.8),
+        # GPU memory share of the "aggressive" strategy; the GPU profile lowers it so that the reload
+        # safety check (GPU memory < 80%) still passes after the reconfiguration.
+        "aggressive": (512, float(os.getenv("AGGRESSIVE_GPU_MEMORY", "0.8"))),
         "latency_optimized": (8, 0.4),
         "balanced": (64, 0.6),
     }

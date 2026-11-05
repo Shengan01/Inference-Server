@@ -1,0 +1,42 @@
+# JSON patch for the MCP agent Deployment: config.pbtxt and model.json live on the shared model
+# volume (mounted with subPath finance-qwen) instead of a private emptyDir, so that edits made by
+# the agent are seen by Triton. The seed does not overwrite existing files.
+- op: replace
+  path: /spec/template/spec/volumes/0
+  value:
+    name: config-volume
+    persistentVolumeClaim:
+      claimName: model-repository
+- op: replace
+  path: /spec/template/spec/initContainers/0/command
+  value:
+    - sh
+    - -c
+    - "mkdir -p /model_repository/finance-qwen && { [ -f /model_repository/finance-qwen/config.pbtxt ] || { cp /config-template/config.pbtxt /model_repository/finance-qwen/config.pbtxt && chmod 666 /model_repository/finance-qwen/config.pbtxt; }; }"
+- op: replace
+  path: /spec/template/spec/initContainers/0/volumeMounts/0
+  value:
+    name: config-volume
+    mountPath: /model_repository/finance-qwen
+    subPath: finance-qwen
+- op: replace
+  path: /spec/template/spec/containers/0/volumeMounts/0
+  value:
+    name: config-volume
+    mountPath: /model_repository/finance-qwen
+    subPath: finance-qwen
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: MODEL_JSON_PATH
+    value: /model_repository/finance-qwen/1/model.json
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: RELOAD_TIMEOUT_SECONDS
+    value: "240"
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: AGGRESSIVE_GPU_MEMORY
+    value: "0.6"

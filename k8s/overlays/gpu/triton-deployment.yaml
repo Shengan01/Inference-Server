@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: inference-monitoring
 spec:
   replicas: 1
+  strategy:
+    type: Recreate   # a single GPU: the old pod must release it before the new one starts
   selector:
     matchLabels:
       app.kubernetes.io/name: triton-server
@@ -19,9 +21,41 @@ spec:
     spec:
       serviceAccountName: triton-sa
       securityContext:
-        runAsNonRoot: false  # Triton requires root or specific UID
+        runAsNonRoot: false  # the NVIDIA Triton image runs as root
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: seed-model-config
+          image: nvcr.io/nvidia/tritonserver:24.06-vllm-python-py3
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /model_repository/finance-qwen/1
+              [ -f /model_repository/finance-qwen/config.pbtxt ] || cp /seed/config.pbtxt /model_repository/finance-qwen/config.pbtxt
+              [ -f /model_repository/finance-qwen/1/model.json ] || cp /seed/model.json /model_repository/finance-qwen/1/model.json
+              chmod 666 /model_repository/finance-qwen/config.pbtxt /model_repository/finance-qwen/1/model.json
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+          volumeMounts:
+            - name: model-repository
+              mountPath: /model_repository
+            - name: seed
+              mountPath: /seed
       containers:
         - name: triton-server
           image: nvcr.io/nvidia/tritonserver:24.06-vllm-python-py3
@@ -33,7 +67,11 @@ spec:
             - "--http-port=8000"
             - "--grpc-port=8001"
             - "--metrics-port=8002"
-            - "--log-verbose=1"
+          env:
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
           ports:
             - name: http
               containerPort: 8000
@@ -49,23 +87,43 @@ spec:
               cpu: "4"
               memory: 12Gi
               nvidia.com/gpu: 1
+          securityContext:
+            allowPrivilegeEscalation: false
+          startupProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 90
           readinessProbe:
             httpGet:
               path: /v2/health/ready
               port: 8000
-            initialDelaySeconds: 60
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /v2/health/live
               port: 8000
-            initialDelaySeconds: 90
             periodSeconds: 15
             timeoutSeconds: 5
           volumeMounts:
             - name: model-repository
               mountPath: /model_repository
+            - name: dshm
+              mountPath: /dev/shm
       volumes:
         - name: model-repository
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: model-repository
+        - name: seed
+          projected:
+            sources:
+              - configMap:
+                  name: triton-model-config
+              - configMap:
+                  name: triton-model-json
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi

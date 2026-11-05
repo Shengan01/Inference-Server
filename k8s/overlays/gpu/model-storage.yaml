@@ -1,0 +1,35 @@
+# Model repository shared by Triton (reads the model and config) and the MCP agent (edits
+# config.pbtxt and model.json to reconfigure the engine). A hostPath PV is enough for the
+# single-node (Minikube) GPU profile; use a ReadWriteMany/replicated volume on a real cluster.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: model-repository-pv
+  labels:
+    app.kubernetes.io/name: model-repository
+    app.kubernetes.io/part-of: inference-monitoring
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: model-repository
+  hostPath:
+    path: /mnt/model_repository
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-repository
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: model-repository
+    app.kubernetes.io/part-of: inference-monitoring
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: model-repository
+  volumeName: model-repository-pv
+  resources:
+    requests:
+      storage: 5Gi

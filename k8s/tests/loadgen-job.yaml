@@ -1,7 +1,7 @@
 # In-cluster load generator / test procedure. The script comes from the
 # loadgen-script ConfigMap; the image is the mcp-agent image (it already ships
-# httpx), so no internet access is needed. __IMAGE__ is substituted by
-# scripts/run_in_cluster_test.sh.
+# httpx), so no internet access is needed. __IMAGE__ and the other __PLACEHOLDERS__ are
+# substituted by scripts/run_in_cluster_test.sh.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -41,6 +41,22 @@ spec:
               value: "http://mcp-agent-service:5000"
             - name: REPORT_PATH
               value: "/tmp/test-report.json"
+            - name: INFER_MODE
+              value: "__INFER_MODE__"
+            - name: RESET_SEQS
+              value: "__RESET_SEQS__"
+            - name: RESET_GPU_MEMORY
+              value: "__RESET_GPU_MEMORY__"
+            - name: RECOVERED_MAX_MS
+              value: "__RECOVERED_MAX_MS__"
+            - name: STORM_RPS
+              value: "__STORM_RPS__"
+            - name: LATENCY_SOURCE
+              value: "__LATENCY_SOURCE__"
+            - name: GEN_MAX_TOKENS
+              value: "__GEN_MAX_TOKENS__"
+            - name: CALM_RPS
+              value: "__CALM_RPS__"
           resources:
             requests:
               cpu: 100m

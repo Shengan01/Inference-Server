@@ -1,0 +1,21 @@
+# vLLM engine arguments for the Triton vLLM backend (seeded into <model>/1/model.json once;
+# afterwards the MCP agent edits the file on the shared volume).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: triton-model-json
+  namespace: inference-monitoring
+  labels:
+    app.kubernetes.io/name: triton-server
+    app.kubernetes.io/part-of: inference-monitoring
+data:
+  model.json: |
+    {
+        "model": "/model_repository/finance-qwen/1",
+        "dtype": "float16",
+        "gpu_memory_utilization": 0.4,
+        "max_model_len": 1024,
+        "max_num_seqs": 32,
+        "enforce_eager": true,
+        "disable_log_requests": true
+    }

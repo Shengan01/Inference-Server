@@ -28,6 +28,22 @@ MODEL_NAME = "finance-qwen"
 # comfortably exceed the mock's default batch capacity (max_num_seqs=32) even
 # when the load generator cannot fire every request at the same instant.
 STORM_RPS = int(os.getenv("STORM_RPS", "400"))
+# "infer": KServe infer endpoint (mock Triton). "generate": Triton generate extension, required by the
+# decoupled vLLM backend of a real Triton server.
+INFER_MODE = os.getenv("INFER_MODE", "infer")
+# Real engine: restore this max_num_seqs through the agent before the test (0 = use the mock reset).
+RESET_SEQS = int(os.getenv("RESET_SEQS", "0"))
+RESET_GPU_MEMORY = float(os.getenv("RESET_GPU_MEMORY", "0.4"))
+# Absolute latency bound for "restored after hot-reload" (the mock is much faster than a real GPU engine).
+RECOVERED_MAX_MS = float(os.getenv("RECOVERED_MAX_MS", "30"))
+# Where the compared latency comes from: "prometheus" (server counters, mock Triton) or "client"
+# (end-to-end latency measured by this in-cluster generator). Real Triton + vLLM is a decoupled model, so
+# nv_inference_request_duration_us does not measure generation time and the client latency is used.
+LATENCY_SOURCE = os.getenv("LATENCY_SOURCE", "prometheus")
+# Real engine: tokens generated per request (more tokens = more GPU time per request, so the batch
+# capacity max_num_seqs becomes the bottleneck) and the baseline request rate.
+GEN_MAX_TOKENS = int(os.getenv("GEN_MAX_TOKENS", "16"))
+CALM_RPS = int(os.getenv("CALM_RPS", "20"))
 
 @dataclass
 class PhaseResult:
@@ -40,25 +56,36 @@ class PhaseResult:
     avg_latency_ms: float
     p95_latency_ms: float
     server_avg_latency_ms: float = -1.0
+    primary_latency_ms: float = -1.0   # the value used by the PASS criteria (see LATENCY_SOURCE)
 
 async def send_inference_request(client: httpx.AsyncClient) -> float:
     start = time.perf_counter()
     try:
-        payload = {
-            "inputs": [
-                {
-                    "name": "text_input",
-                    "shape": [1],
-                    "datatype": "BYTES",
-                    "data": ["Analyze Q3 tech market earnings and inflation impact."]
-                }
-            ]
-        }
-        resp = await client.post(
-            f"{TRITON_URL}/v2/models/{MODEL_NAME}/infer",
-            json=payload,
-            timeout=5.0
-        )
+        if INFER_MODE == "generate":
+            resp = await client.post(
+                f"{TRITON_URL}/v2/models/{MODEL_NAME}/generate",
+                json={
+                    "text_input": "Analyze Q3 tech market earnings and inflation impact.",
+                    "parameters": {"stream": False, "temperature": 0, "max_tokens": GEN_MAX_TOKENS, "ignore_eos": True},
+                },
+                timeout=120.0,
+            )
+        else:
+            payload = {
+                "inputs": [
+                    {
+                        "name": "text_input",
+                        "shape": [1],
+                        "datatype": "BYTES",
+                        "data": ["Analyze Q3 tech market earnings and inflation impact."]
+                    }
+                ]
+            }
+            resp = await client.post(
+                f"{TRITON_URL}/v2/models/{MODEL_NAME}/infer",
+                json=payload,
+                timeout=5.0
+            )
         latency_ms = (time.perf_counter() - start) * 1000.0
         if resp.status_code == 200:
             return latency_ms
@@ -175,6 +202,23 @@ async def trigger_reconfiguration(strategy: str) -> bool:
             print(f"   [ERROR] Blad podczas rekonfiguracji: {e}")
             return False
 
+def set_primary(r: "PhaseResult") -> None:
+    r.primary_latency_ms = r.avg_latency_ms if LATENCY_SOURCE == "client" else r.server_avg_latency_ms
+
+async def wait_model_ready(timeout_s: float = 300.0) -> bool:
+    """Wait until the model is loaded (a real engine needs time after a hot-reload)."""
+    deadline = time.time() + timeout_s
+    async with httpx.AsyncClient() as client:
+        while time.time() < deadline:
+            try:
+                resp = await client.get(f"{TRITON_URL}/v2/models/{MODEL_NAME}/ready", timeout=5.0)
+                if resp.status_code == 200:
+                    return True
+            except Exception:
+                pass
+            await asyncio.sleep(3.0)
+    return False
+
 async def main():
     print("==========================================================")
     print("PROCEDURA TESTOWA SYSTEMU MONITORINGU KUBERNETES")
@@ -183,13 +227,25 @@ async def main():
     print(f"MCP Agent URL: {MCP_AGENT_URL}")
     print("==========================================================")
 
-    # 0. Przywrocenie stanu bazowego mocka (max_num_seqs=32), zeby test byl powtarzalny.
-    #    Prawdziwy Triton nie ma tego endpointu - blad jest ignorowany.
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(f"{TRITON_URL}/_mock/reset", timeout=5.0)
-        except Exception:
-            pass
+    # 0. Przywrocenie stanu bazowego, zeby test byl powtarzalny.
+    if RESET_SEQS > 0:
+        # Prawdziwy silnik: ustaw max_num_seqs przez agenta (hot-reload) i poczekaj na model.
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(f"{MCP_AGENT_URL}/reconfigure/dynamic",
+                                         json={"target_seqs": RESET_SEQS, "gpu_memory": RESET_GPU_MEMORY},
+                                         timeout=300.0)
+                print(f"[RESET] max_num_seqs={RESET_SEQS}: {resp.status_code}")
+            except Exception as e:
+                print(f"[RESET] blad: {e}")
+        await wait_model_ready()
+    else:
+        # Mock Triton: endpoint pomocniczy (prawdziwy Triton go nie ma, blad jest ignorowany).
+        async with httpx.AsyncClient() as client:
+            try:
+                await client.post(f"{TRITON_URL}/_mock/reset", timeout=5.0)
+            except Exception:
+                pass
 
     # 1. Warm-up / Sprawdzenie dostepnosci
     async with httpx.AsyncClient() as client:
@@ -208,22 +264,27 @@ async def main():
 
     # Faza 1: Spokoj (The Calm)
     snap0 = await triton_counters()
-    res1 = await run_traffic_phase("1. THE CALM (Obciazenie bazowe)", target_rps=20, duration_s=10)
+    res1 = await run_traffic_phase("1. THE CALM (Obciazenie bazowe)", target_rps=CALM_RPS, duration_s=10)
     snap1 = await triton_counters()
     res1.server_avg_latency_ms = server_avg_ms(snap0, snap1)
+    set_primary(res1)
     results.append(res1)
 
     # Faza 2: Skok obciazenia (The Storm)
     res2 = await run_traffic_phase("2. THE STORM (Skok obciazenia - degradacja latencji)", target_rps=STORM_RPS, duration_s=15)
     snap2 = await triton_counters()
     res2.server_avg_latency_ms = server_avg_ms(snap1, snap2)
+    set_primary(res2)
     results.append(res2)
 
     # Faza 3: Interwencja Agenta SRE (The Resolution)
     reconfigured = await trigger_reconfiguration("aggressive")
+    if not await wait_model_ready():
+        print("[WARN] model nie jest gotowy po rekonfiguracji")
     res3 = await run_traffic_phase("3. THE RESOLUTION (Po rekonfiguracji klastra)", target_rps=STORM_RPS, duration_s=15)
     snap3 = await triton_counters()
     res3.server_avg_latency_ms = server_avg_ms(snap2, snap3)
+    set_primary(res3)
     results.append(res3)
 
     # Sprawdzenie metryk w Prometheus
@@ -232,6 +293,7 @@ async def main():
     # Podsumowanie
     print("\n==========================================================")
     print("PODSUMOWANIE REALIZACJI PROCEDURY TESTOWEJ")
+    print(f"(opoznienie porownywane w kryteriach: zrodlo = {LATENCY_SOURCE})")
     print("==========================================================")
     print(f"{'Faza testu':<38} | {'RPS':<5} | {'Serwer sr.':<12} | {'Klient sr.':<12} | {'Klient P95':<12} | {'Sukces':<7}")
     print("-" * 100)
@@ -245,10 +307,10 @@ async def main():
         "reconfigure_endpoint_200": reconfigured,
         "post_reconfig_success_rate>=95%": res3.requests_sent > 0 and res3.successful_requests / res3.requests_sent >= 0.95,
         "prometheus_targets_up_and_rules_loaded": prom["ok"],
-        # Server-side latency (from Prometheus counters), independent of port-forward overhead
-        "storm_degrades_server_latency>2x_baseline_and_>25ms": res2.server_avg_latency_ms > max(25.0, 2.0 * res1.server_avg_latency_ms),
-        "hot_reload_restores_latency<30ms": 0 < res3.server_avg_latency_ms < 30.0,
-        "hot_reload_improves_latency>50%": 0 < res3.server_avg_latency_ms < 0.5 * res2.server_avg_latency_ms,
+        # Latency compared per LATENCY_SOURCE (Prometheus server counters, or in-cluster client latency)
+        "storm_degrades_server_latency>2x_baseline_and_>25ms": res2.primary_latency_ms > max(25.0, 2.0 * res1.primary_latency_ms),
+        f"hot_reload_restores_latency<{RECOVERED_MAX_MS:g}ms": 0 < res3.primary_latency_ms < RECOVERED_MAX_MS,
+        "hot_reload_improves_latency>50%": 0 < res3.primary_latency_ms < 0.5 * res2.primary_latency_ms,
     }
     for name, ok in checks.items():
         print(f"[{'PASS' if ok else 'FAIL'}] {name}")

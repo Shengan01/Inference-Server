@@ -27,3 +27,6 @@ data/
 resume.tex
 test-report.json
 test-output.log
+
+# Model weights and files are not stored in the repository
+models/

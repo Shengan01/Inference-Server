@@ -5,7 +5,15 @@ namespace: inference-monitoring
 
 resources:
   - ../../base
+  - model-storage.yaml
+  - model-json-configmap.yaml
   - triton-deployment.yaml
+
+patches:
+  - path: mcp-agent-patch.yaml
+    target:
+      kind: Deployment
+      name: mcp-agent
 
 # The tag is bumped automatically by the CI/CD pipeline (gitops-bump job).
 images:
