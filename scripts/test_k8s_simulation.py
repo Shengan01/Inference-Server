@@ -194,7 +194,7 @@ async def trigger_reconfiguration(strategy: str) -> bool:
             resp = await client.post(
                 f"{MCP_AGENT_URL}/reconfigure",
                 json={"strategy": strategy},
-                timeout=10.0
+                timeout=300.0  # a real vLLM engine needs a while to unload and load the model
             )
             print(f"   [OK] Odpowiedz MCP Agenta: {resp.status_code} - {resp.text}")
             return resp.status_code == 200

@@ -1,0 +1,35 @@
+# GPU variant of the core Application: deploys k8s/overlays/gpu (real Triton + vLLM on the host GPU).
+# Use it INSTEAD of argocd-application.yaml on a cluster that has the NVIDIA device plugin and the model
+# files on the node (see scripts/deploy_minikube_gpu.sh). The name is the same so ArgoCD treats it as
+# the replacement of the CPU/mock Application.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: inference-monitoring-app
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: inference-monitoring
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/Shengan01/Inference-Server.git'
+    targetRevision: main
+    path: k8s/overlays/gpu
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: inference-monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
