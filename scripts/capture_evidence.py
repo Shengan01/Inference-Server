@@ -161,7 +161,7 @@ def grafana_screenshot(out, size=(1600, 1000), wait=14):
     jar.unlink()
     found = sh(f"curl -sk --resolve {HOST}:443:{ip} -u admin:{pw} 'https://{HOST}/grafana/api/search?query=Inference'").stdout
     uid = re.search(r'"uid":"([^"]+)"', found).group(1)
-    url = f"https://{HOST}/grafana/d/{uid}?orgId=1&from=now-15m&to=now&kiosk"
+    url = f"https://{HOST}/grafana/d/{uid}?orgId=1&from=now-4m&to=now&kiosk"
 
     port = 9333
     proc = subprocess.Popen([CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
@@ -204,7 +204,7 @@ def resolve_url(payload):
     ip = sh("minikube ip").stdout.strip()
     extra = []
     if payload == "LATEST_RUN":
-        runs = sh("curl -s 'https://api.github.com/repos/Shengan01/Inference-Server/actions/runs?per_page=1&status=completed'").stdout
+        runs = sh("curl -s 'https://api.github.com/repos/Shengan01/Inference-Server/actions/runs?per_page=1&status=success'").stdout
         run_id = re.search(r'"id": *(\d+)', runs).group(1)
         return f"https://github.com/Shengan01/Inference-Server/actions/runs/{run_id}", extra
     return payload, extra
