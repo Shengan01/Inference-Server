@@ -78,7 +78,8 @@ data:
         def get_metrics(self):
             with self.lock:
                 load_factor = min(1.0, (self.active_requests + 1) / max(1, self.max_num_seqs))
-                gpu_util = int(20 + (load_factor * 75))
+                # Real Triton reports nv_gpu_utilization as a fraction in [0.0, 1.0]
+                gpu_util = round((20 + (load_factor * 75)) / 100.0, 3)
                 total_vram = 16384 * 1024 * 1024  # 16 GB in bytes
                 used_vram = int(total_vram * min(0.95, self.gpu_memory_util + (load_factor * 0.15)))
 
@@ -94,11 +95,15 @@ data:
     # TYPE nv_inference_request_duration_us counter
     nv_inference_request_duration_us{{model="finance-qwen",version="1"}} {int(self.total_duration_us)}
 
+    # HELP nv_inference_pending_request_count Instantaneous number of pending requests
+    # TYPE nv_inference_pending_request_count gauge
+    nv_inference_pending_request_count{{model="finance-qwen",version="1"}} {self.active_requests}
+
     # HELP nv_inference_queue_duration_us Cumulative queue wait duration in microseconds
     # TYPE nv_inference_queue_duration_us counter
     nv_inference_queue_duration_us{{model="finance-qwen",version="1"}} {int(self.total_queue_us)}
 
-    # HELP nv_gpu_utilization GPU Utilization percentage (0-100)
+    # HELP nv_gpu_utilization GPU utilization rate [0.0 - 1.0]
     # TYPE nv_gpu_utilization gauge
     nv_gpu_utilization{{gpu_uuid="GPU-mock-4080-k8s"}} {gpu_util}
 
