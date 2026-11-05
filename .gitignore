@@ -26,3 +26,4 @@ prometheus_data/
 data/
 resume.tex
 test-report.json
+test-output.log

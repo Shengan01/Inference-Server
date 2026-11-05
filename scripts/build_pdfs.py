@@ -50,6 +50,7 @@ pre.mermaid { background: #fff; border: 1px solid #ddd; text-align: center; page
 pre.mermaid svg { width: 100% !important; max-width: none !important; height: auto; }
 div.diagram pre.mermaid { border: none; padding: 0; margin: 0; }
 a { color: #1a5fb4; word-break: break-word; }
+img { max-width: 100%; border: 1px solid #d0d7de; margin: 4px 0 10px 0; page-break-inside: avoid; }
 """
 
 
@@ -65,6 +66,8 @@ def render_markdown(text: str) -> str:
 
     # An optional bold caption line right before the fence is moved onto the diagram page.
     text = re.sub(r"(?:(\*\*[^\n]+)\n\n)?```mermaid\n(.*?)```", stash, text, flags=re.S)
+    # Relative image paths (img/x.png, as used in docs/*.md) -> absolute file URIs for the temp HTML page.
+    text = text.replace("](img/", "](" + (ROOT / "docs" / "img").as_uri() + "/")
     # python-markdown needs 4-space indents for nested lists; the sources use 3 (GitHub style).
     text = re.sub(r"^((?: {3})+)(?=(?:[*+-]|\d+\.) )", lambda m: " " * (4 * len(m.group(1)) // 3), text, flags=re.M)
     body = markdown.markdown(text, extensions=["tables", "fenced_code", "sane_lists"])
