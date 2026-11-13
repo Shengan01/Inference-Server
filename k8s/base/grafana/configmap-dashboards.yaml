@@ -116,7 +116,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "rate(nv_inference_request_duration_us{model=\"finance-qwen\"}[3s]) / rate(nv_inference_request_success{model=\"finance-qwen\"}[3s]) / 1000",
+              "expr": "sum(rate(nv_inference_request_duration_us{model=\"finance-qwen\"}[3s])) / sum(rate(nv_inference_request_success{model=\"finance-qwen\"}[3s])) / 1000",
               "legendFormat": "Avg Latency",
               "refId": "A"
             }
@@ -261,7 +261,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "rate(nv_inference_request_success{model=\"finance-qwen\"}[3s])",
+              "expr": "sum(rate(nv_inference_request_success{model=\"finance-qwen\"}[3s]))",
               "legendFormat": "RPS",
               "refId": "A"
             }
@@ -353,7 +353,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "rate(nv_inference_request_success{model=\"finance-qwen\"}[3s])",
+              "expr": "sum(rate(nv_inference_request_success{model=\"finance-qwen\"}[3s]))",
               "legendFormat": "Success Rate",
               "refId": "A"
             },
@@ -362,7 +362,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "rate(nv_inference_request_failure{model=\"finance-qwen\"}[3s])",
+              "expr": "sum(rate(nv_inference_request_failure{model=\"finance-qwen\"}[3s]))",
               "legendFormat": "Failure Rate",
               "refId": "B"
             }
@@ -432,7 +432,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "nv_inference_pending_request_count{model=\"finance-qwen\"}",
+              "expr": "sum(nv_inference_pending_request_count{model=\"finance-qwen\"})",
               "legendFormat": "Queue",
               "refId": "A"
             }

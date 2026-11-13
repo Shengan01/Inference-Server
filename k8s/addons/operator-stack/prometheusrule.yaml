@@ -19,7 +19,7 @@ spec:
             description: "Triton target has been unreachable for more than 10 seconds."
 
         - alert: HighInferenceLatency
-          expr: (rate(nv_inference_request_duration_us[15s]) / (rate(nv_inference_request_success[15s]) + 0.001)) / 1000 > 50
+          expr: (sum(rate(nv_inference_request_duration_us[15s])) / (sum(rate(nv_inference_request_success[15s])) + 0.001)) / 1000 > 50
           for: 15s
           labels:
             severity: warning
@@ -28,7 +28,7 @@ spec:
             description: "Average latency per request is exceeding 50ms under current load."
 
         - alert: HighInferenceQueueDepth
-          expr: nv_inference_queue_duration_us > 100000
+          expr: sum(nv_inference_queue_duration_us) > 100000
           for: 15s
           labels:
             severity: warning
