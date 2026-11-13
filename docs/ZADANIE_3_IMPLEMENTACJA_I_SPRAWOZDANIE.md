@@ -192,8 +192,8 @@ TEST_PROFILE=gpu LOADGEN_IMAGE=<obraz mcp-agent> ./scripts/run_in_cluster_test.s
 
 | Faza | Żądań/s | Wysłane | Pomyślne | Śr. opóźnienie end-to-end [ms] |
 | :--- | :---: | :---: | :---: | :---: |
-| 1. CALM | 4 | 40 | 40 | 354 |
-| 2. STORM (`max_num_seqs` = 4) | 60 | 180 | 180 | **2797** |
+| 1. CALM | 4 | 40 | 40 | 368 |
+| 2. STORM (`max_num_seqs` = 4) | 60 | 180 | 180 | **2790** |
 | 3. RESOLUTION (po hot-reload, `max_num_seqs` = 512) | 60 | 840 | 840 | **974** |
 
 Zachowanie silnika widać w logu vLLM (kolumny `running` i `pending`): w fazie STORM silnik obsługuje 4 żądania naraz, a kolejne czekają w kolejce (`pending` > 0); po przeładowaniu z nowym `max_num_seqs` pracuje na kilkudziesięciu żądaniach jednocześnie i kolejka znika:
@@ -207,7 +207,7 @@ Dashboard Grafany po teście (dwa kolejne przebiegi testu; wykresy GPU, przepust
 Alerty w Prometheusie i w Alertmanagerze:
 ![Alerty w Prometheusie](img/t45_prometheus_alerts.png)
 ![Alertmanager](img/t45_alertmanager.png)
-**Wynik:** wszystkie 7 kryteriów spełnionych. Skuteczność żądań 100%, opóźnienie rośnie w burzy ponad 7.9× względem bazowego, a po hot-reload spada do 974 ms (około 2.9× mniej niż w burzy). Opóźnienie jest mierzone end-to-end wewnątrz klastra, ponieważ model vLLM jest „decoupled”: Triton nie raportuje czasu generowania w `nv_inference_request_duration_us`, a w tej wersji obrazu (24.06) nie ma metryk vLLM. Test jest powtarzalny (trzy kolejne przebiegi dały zbliżone wyniki).
+**Wynik:** wszystkie 7 kryteriów spełnionych. Skuteczność żądań 100%, opóźnienie rośnie w burzy ponad 7.6× względem bazowego, a po hot-reload spada do 974 ms (około 2.9× mniej niż w burzy). Opóźnienie jest mierzone end-to-end wewnątrz klastra, ponieważ model vLLM jest „decoupled”: Triton nie raportuje czasu generowania w `nv_inference_request_duration_us`, a w tej wersji obrazu (24.06) nie ma metryk vLLM. Test jest powtarzalny (trzy kolejne przebiegi dały zbliżone wyniki).
 
 ### Test 6: GitOps, self-heal ArgoCD
 **Cel:** ręczne zmiany w klastrze są cofane do stanu z repozytorium (Zadanie 2, Test 6).
@@ -254,6 +254,7 @@ https://github.com/Shengan01/Inference-Server/actions
 * TLS jest self-signed, a sekrety tworzone są skryptem (poza Git). W środowisku produkcyjnym należy użyć cert-manager i Sealed/External Secrets.
 * W Minikube kontroler Ingress jest usługą `NodePort` pod `minikube ip` (w chmurze otrzymałby adres LoadBalancera). Wolumen modelu to `hostPath` (jeden węzeł).
 * Podczas pracy wykryto i poprawiono niezgodność mocka z prawdziwym Triton (`nv_gpu_utilization` jako ułamek 0–1, metryka `nv_inference_pending_request_count`) oraz to, że agent zmieniał tylko `config.pbtxt`, którego vLLM nie czyta (teraz aktualizuje też `model.json`).
+* Po przeładowaniu modelu prawdziwy Triton raportuje metryki modelu z dodatkową etykietą `gpu_uuid`, co tworzyło dwie serie dla tej samej metryki (zdublowane wartości na dashboardzie). Zapytania dashboardu i reguł alertów sumują teraz serie (`sum(...)`), więc zmiana zestawu etykiet nie wpływa na wynik.
 
 ---
 
